@@ -30,21 +30,8 @@
 
 // Hardware map
 
-// Quadrature mouse output pins
-// Right mouse button
-#define RB_PIN 6
-// Middle mouse button
-#define MB_PIN 5
-// Left mouse button
-#define LB_PIN 4
-// Y axis output
-#define YA_PIN 2
-#define YB_PIN 3
-// X axis output
-#define XA_PIN 0
-#define XB_PIN 1
-// Mouse Status LED
-#define STATUS_PIN 7
+// Mouse Status LED. 7 on the original rp2040mouse board, but we're on a pico now, so we'll use the pico LED On GPIO25
+#define STATUS_PIN 25
 
 // Function prototypes
 void initialiseHardware(void);
