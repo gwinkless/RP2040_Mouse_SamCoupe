@@ -12,6 +12,7 @@ This is the software component of my Sam Coupé version of Darren's RP2040 based
 
 Hardware will be available from PCBWay once I've finished designing it, or you can build your own version with a Pico, a DIN8 (262°) connector, two 74HC03 open-drain NAND gates, a couple of 100nF capacitors, a 300Ohm pullup resistor and a USB OTG adapter.
 
+This is the PIO version, which in theory is mildly more experimental than the main branch; however it does seem to work OK and allows us to drop the RP2040 CPU clock down to about 48MHz.
 
 #### Why did you make it?
 
