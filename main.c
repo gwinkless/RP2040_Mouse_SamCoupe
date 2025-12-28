@@ -2,7 +2,8 @@
   main.c
 
   Main functions
-    RP2040 - USB to quadrature mouse converter
+    RP2040 - USB to Sam Coupe mouse converter
+    Copyright (C) 2025 Geoff Winkless
     Copyright (C) 2023 Darren Jones
     Copyright (C) 2017-2020 Simon Inns
 
@@ -33,9 +34,6 @@
 #include "pico/bootrom.h"
 #include "pico/binary_info.h"
 
-// Override default USB pin
-#define PIO_USB_DP_PIN_DEFAULT 8
-
 // Configure RP2040 for slower flash
 #define PICO_XOSC_STARTUP_DELAY_MULTIPLIER 64
 #define PICO_BOOT_STAGE2_CHOOSE_GENERIC_03H 1
@@ -54,42 +52,20 @@
 #define DATA_BITS 8
 #define STOP_BITS 1
 #define PARITY UART_PARITY_NONE
-#define UART_TX_PIN 12
-#define UART_RX_PIN 13
+/*#define UART_TX_PIN 12
+#define UART_RX_PIN 13 */
 
-#define MOUSEX 0
-#define MOUSEY 1
 
-// Quadrature output buffer limit
-//
-// Since the slow rate limit will prevent the quadrature output keeping up with the USB movement
-// report input, the quadrature output will lag behind (i.e. the quadrature mouse will continue
-// to move after the USB mouse has stopped).  This setting limits the maximum number of buffered
-// movements to the quadrature output.  If the buffer reaches this value further USB movements
-// will be discarded
-#define Q_BUFFERLIMIT 300
+volatile int16_t samYDelta = 0;
+volatile int16_t samXDelta = 0;
+volatile uint8_t samButts = 0xf; // we start off with no buttons pressed (they're active-low)
+volatile bool mouseLive = false;
 
-// Interrupt Service Routines for quadrature output -------------------------------------------------------------------
+volatile uint8_t mousedev_addr;
+volatile uint8_t mouseinstance;
+volatile bool justmounted = false; // usb callback sets justmounted and mouseinstance/dev_addr
 
-// The following globals are used by the interrupt service routines to track the mouse
-// movement.  The mouseDirection indicates which direction the mouse is moving in and
-// the mouseEncoderPhase tracks the current phase of the quadrature output.
-//
-// The mouseDistance variable tracks the current distance the mouse has left to move
-// (this is incremented by the USB mouse reports and decremented by the ISRs as they
-// output the quadrature to the retro host).
-volatile int8_t mouseDirectionX = 0;    // X direction (0 = decrement, 1 = increment)
-volatile int8_t mouseEncoderPhaseX = 0; // X Quadrature phase (0-3)
-
-volatile int8_t mouseDirectionY = 0;    // Y direction (0 = decrement, 1 = increment)
-volatile int8_t mouseEncoderPhaseY = 0; // Y Quadrature phase (0-3)
-
-volatile int16_t mouseDistanceX = 0; // Distance left for mouse to move
-volatile int16_t mouseDistanceY = 0; // Distance left for mouse to move
-
-struct repeating_timer timer1;
-struct repeating_timer timer2;
-
+auto_init_mutex(samDeltaMutex);
 #ifdef DEBUG
 #define DEBUG_PRINT(x) printf x
 #define CFG_TUSB_DEBUG 3
@@ -101,99 +77,118 @@ struct repeating_timer timer2;
 #define CFG_TUSB_DEBUG 0
 #endif
 
-void core1_main()
-{
-  sleep_ms(10);
+// Cookie's BoaI article says that the original hardware resets after about 30uS
+// we'll be kind and make it 40uS
+#define SamMouseTimeout_us 40
+void 
+__attribute__((noinline, long_call, section(".time_critical"))) 
+SamRDMTightLoop () {
+  static uint32_t LastRDMSelTimeout = 0;
+	static int rdmstate = 0;
+  static bool ledstate=0;
+	static int copyXDelta, copyYDelta;
+  static unsigned char copyButtState;
+  int nextpins = 0;
+  while (1) {
 
-  // Use tuh_configure() to pass pio configuration to the host stack
-  // Note: tuh_configure() must be called before
-  pio_usb_configuration_t pio_cfg = PIO_USB_DEFAULT_CONFIG;
-  tuh_configure(1, TUH_CFGID_RPI_PIO_USB_CONFIGURATION, &pio_cfg);
+// when RDMSEL is first pulled low, we copy the mouse state to our copyXXX statics, then send 1111 to the mouse port
+// (actually we don't send anything - we let all pins float)
+// (the keyboard will override that if any of the cursors or ctrl are held down, but we don't need to worry about that)
+// for subsequent reads before the timeout expires we send f, buttons, ydelta>>8, (ydelta>>4) & f, ydelta&f, xdelta>>8, (xdelta>>8)&f, xdelta&f, f
+// if there's longer than 30uS between two reads then we start again
 
-  // To run USB SOF interrupt in core1, init host stack for pio_usb (roothub
-  // port1) on core1
-  tuh_init(1);
+// it would actually makes more sense to output the next data values to the pins once RDMSel goes inactive, so that
+// once it goes active again the data is already waiting. that way we don't need to worry about response times
 
-  while (true)
-  {
-    tuh_task(); // tinyusb host task
+
+    while (!gpio_get(RDMSEL_PIN)) { // our pin is inverted, so we're testing for high
+      uint32_t newtm;
+// if we timeout in a non-zero state while waiting for active RDMSEL, we reset the state to 0 and clear the GPIOs
+// so that when we do go active the values will already be correct
+      if (rdmstate
+        && ((newtm = time_us_32()) > LastRDMSelTimeout)
+        && ((LastRDMSelTimeout > SamMouseTimeout_us) || (newtm < (3 * SamMouseTimeout_us)))
+      ) {
+        if (rdmstate > 1) gpio_put(STATUS_PIN, ledstate ^= 1); // flip the LED every time we timeout, unless we only read a single value
+        rdmstate = 0;
+        gpio_put_masked(SamMousePinsMask, 0);
+      }
+    }
+//    gpio_put(STATUS_PIN, ledstate^=1);
+    // reset the inter-request timeout
+    LastRDMSelTimeout = time_us_32() + SamMouseTimeout_us;
+    
+    switch (rdmstate) {
+      default: // shouldn't need this (rdmstate will only ever be 0-8), but just in case...
+        rdmstate = 0;
+        // falls through
+      case 0:
+        mutex_enter_blocking(&samDeltaMutex);
+        // we add the delta values to our copy because if the last read didn't complete we'll want to remember it
+        copyYDelta -= samYDelta; // we negate the Y delta because Sam thinks up is positive, while USB thinks up is negative
+        samYDelta = 0;
+        copyXDelta += samXDelta;
+        samXDelta = 0;
+        mutex_exit(&samDeltaMutex);
+        if (copyXDelta > 0x7ff) {
+          copyXDelta = 0x7ff;
+        } else if (copyXDelta < -0x7ff) {
+          copyXDelta = -0x7ff;
+        }
+        if (copyYDelta > 0x7ff) {
+          copyYDelta = 0x7ff;
+        } else if (copyYDelta < -0x7ff) {
+          copyYDelta = -0x7ff;
+        }
+
+        copyButtState = samButts;
+
+// nextpins is the value we set the pins to in the _next_ state: we actually
+// set them as soon as this active-state ends, because the NAND gates will
+// block off the values until RDMSEL goes active again. This way we get to be
+// instantly ready, while running the rp2040 at a lower speed (and thus
+// saving power)
+
+        nextpins = 0xf;
+        break;
+      case 1:
+        nextpins = copyButtState;
+        break;
+      case 2:
+        nextpins = (copyYDelta >> 8);
+        break;
+      case 3:
+        nextpins = (copyYDelta >> 4);
+        break;
+      case 4:
+        nextpins = (copyYDelta);
+        break;
+      case 5:
+        nextpins = (copyXDelta >> 8);
+        break;
+      case 6:
+        nextpins = (copyXDelta >> 4);
+        break;
+      case 7:
+        nextpins = (copyXDelta);
+        break;
+      case 8:
+        nextpins = 0xf;
+        copyYDelta = 0;
+        copyXDelta = 0;
+        break;
+    }
+    rdmstate = (rdmstate + 1) % 9;
+    if (!mouseLive) nextpins = 0xf; // if the mouse isn't plugged in, then we just keep everything high
+    while (gpio_get(RDMSEL_PIN));
+    // rdmsel has gone inactive again, so we move to the next state and output the values for that state
+  // these values below are all inverted (false:true, not true:false) because we're using open-collector
+  // NAND gates: RDMSEL (active high) NAND 1 becomes 0
+    gpio_put(SamMouseBit0_PIN, (nextpins & 1) ? false : true);
+    gpio_put(SamMouseBit1_PIN, (nextpins & 2) ? false : true);
+    gpio_put(SamMouseBit2_PIN, (nextpins & 4) ? false : true);
+    gpio_put(SamMouseBit3_PIN, (nextpins & 8) ? false : true);
   }
-}
-
-bool timer1_callback(struct repeating_timer *t)
-{
-  // Silence compilation warning
-  (void)t;
-  // Process X output
-  if (mouseDistanceX > 0)
-  {
-    // Change phase and range check
-    if (mouseDirectionX == 0)
-    {
-      mouseEncoderPhaseX--;
-      if (mouseEncoderPhaseX < 0)
-        mouseEncoderPhaseX = 3;
-    }
-    else
-    {
-      mouseEncoderPhaseX++;
-      if (mouseEncoderPhaseX > 3)
-        mouseEncoderPhaseX = 0;
-    }
-
-    // Set the output pins according to the current phase
-    if (mouseEncoderPhaseX == 0)
-      gpio_put(XA_PIN, 1); // Set X1 to 1
-    if (mouseEncoderPhaseX == 1)
-      gpio_put(XB_PIN, 1); // Set X2 to 1
-    if (mouseEncoderPhaseX == 2)
-      gpio_put(XA_PIN, 0); // Set X1 to 0
-    if (mouseEncoderPhaseX == 3)
-      gpio_put(XB_PIN, 0); // Set X2 to 0
-
-    // Decrement the distance left to move
-    mouseDistanceX--;
-  }
-
-  return true;
-}
-
-// Interrupt Service Routine based on Timer2 for mouse Y movement quadrature output
-bool timer2_callback(struct repeating_timer *t)
-{
-  // Silence compilation warning
-  (void)t;
-  // Process Y output
-  if (mouseDistanceY > 0)
-  {
-    // Change phase and range check
-    if (mouseDirectionY == 0)
-    {
-      mouseEncoderPhaseY--;
-      if (mouseEncoderPhaseY < 0)
-        mouseEncoderPhaseY = 3;
-    }
-    else
-    {
-      mouseEncoderPhaseY++;
-      if (mouseEncoderPhaseY > 3)
-        mouseEncoderPhaseY = 0;
-    }
-
-    // Set the output pins according to the current phase
-    if (mouseEncoderPhaseY == 3)
-      gpio_put(YA_PIN, 0); // Set Y1 to 0
-    if (mouseEncoderPhaseY == 2)
-      gpio_put(YB_PIN, 0); // Set Y2 to 0
-    if (mouseEncoderPhaseY == 1)
-      gpio_put(YA_PIN, 1); // Set Y1 to 1
-    if (mouseEncoderPhaseY == 0)
-      gpio_put(YB_PIN, 1); // Set Y2 to 1
-
-    // Decrement the distance left to move
-    mouseDistanceY--;
-  }
-  return true;
 }
 
 static void blink_status(uint8_t count)
@@ -211,10 +206,53 @@ static void blink_status(uint8_t count)
   }
 }
 
-int main()
+
+void core1_main()
 {
-  // default 125MHz is not appropreate. Sysclock should be multiple of 12MHz.
-  set_sys_clock_khz(120000, true);
+  sleep_ms(10);
+  board_init();
+
+  tuh_init(0); // 1 for pio-usb or max3421, 0 for main pico hub
+
+  while (true)
+  {
+    tuh_task(); // tinyusb host task
+    if (justmounted) {
+// apparently (according to some tinyusb forum post) we shouldn't be setting these values from the callback, because
+// the interface is still enumerating at the point of the callback. So we set justmounted in the callback and do this here instead.
+  // Interface protocol (hid_interface_protocol_enum_t)
+      uint8_t const itf_protocol = tuh_hid_interface_protocol(mousedev_addr, mouseinstance);
+      justmounted = false;
+      DEBUG_PRINT(("Protocol: %d\r\n", itf_protocol));
+
+      // Receive report from boot mouse only
+      // tuh_hid_report_received_cb() will be invoked when report is available
+      if (itf_protocol == HID_ITF_PROTOCOL_MOUSE)
+      {
+        // Set protocol to full report mode for mouse wheel support
+        tuh_hid_set_protocol(mousedev_addr, mouseinstance, HID_PROTOCOL_REPORT);
+        if (tuh_hid_receive_report(mousedev_addr, mouseinstance))
+        {
+          blink_status(3);
+        }
+        gpio_put(STATUS_PIN, 1); // Turn status LED on
+        mouseLive = true;
+      } else {
+        blink_status(10+itf_protocol);
+      }
+    }
+  }
+}
+
+int 
+__attribute__((noinline, long_call, section(".time_critical"))) 
+main()
+{
+// i tried setting the clock speed lower (eg 96MHz) but it messed up everything
+// If we changed from polling to spot RDMSEL going high to using an interrupt
+// (with a timer interrupt to reset the rdmstate value after 30uS) we could probably
+// try lowering this clock rate to save power, but for now this is fine.
+  set_sys_clock_khz(125000, true);
   stdio_init_all();
 
 // Setup Debug to UART
@@ -228,14 +266,16 @@ int main()
 #endif
   DEBUG_PRINT(("\033[2J"));
   DEBUG_PRINT(("****************************************************\r\n"));
-  DEBUG_PRINT(("*         RP2040 USB To Quadrature Adapter         *\r\n"));
+  DEBUG_PRINT(("*         RP2040 USB To Sam Coupé adaptor          *\r\n"));
   DEBUG_PRINT(("*         Copyright 2022 Darren Jones              *\r\n"));
   DEBUG_PRINT(("*         (nz.darren.jones@gmail.com)              *\r\n"));
+  DEBUG_PRINT(("*         Copyright 2025 Geoff Winkless            *\r\n"));
+  DEBUG_PRINT(("*         (sam@ukku.uk)                            *\r\n"));
   DEBUG_PRINT(("*         Version: %s                             *\r\n", VERSION));
   DEBUG_PRINT(("*         Build Date: %s %s         *\r\n", __DATE__, __TIME__));
   DEBUG_PRINT(("****************************************************\r\n"));
   DEBUG_PRINT(("\r\n"));
-  DEBUG_PRINT(("RP2040 USB To Quadrature Booting.....\r\n"));
+  DEBUG_PRINT(("RP2040 USB To Sam Booting.....\r\n"));
 
   // all USB task run in core1
   multicore_reset_core1();
@@ -243,63 +283,51 @@ int main()
 
   multicore_launch_core1(core1_main);
   DEBUG_PRINT(("Core1 Launched\r\n"));
-
   // Initialise the RP2040 hardware
   initialiseHardware();
   DEBUG_PRINT(("Hardware Initalized\r\n"));
 
   // Blink Status LED and wait for everything to settle
   blink_status(10);
-
-  // Initialise the timers
-  while (true)
-  {
-    stdio_flush();
-    sleep_us(10);
-  }
+  // can't believe this (5 seconds) needs to be so long. Also, we don't really care if we run before everything's ready
+  // now we (core0) go and sit in a tight loop waiting for RDMSel to change
+  SamRDMTightLoop();
 }
 
 void initialiseHardware(void)
 {
   // Document pins for picotool
-  bi_decl(bi_1pin_with_name(XA_PIN, "X1 Quadrature Output"));
-  bi_decl(bi_1pin_with_name(XB_PIN, "X2 Quadrature Output"));
-  bi_decl(bi_1pin_with_name(YA_PIN, "Y1 Quadrature Output"));
-  bi_decl(bi_1pin_with_name(YB_PIN, "Y2 Quadrature Output"));
-  bi_decl(bi_1pin_with_name(RB_PIN, "Right Mouse Button"));
-  bi_decl(bi_1pin_with_name(MB_PIN, "Middle Mouse Button"));
-  bi_decl(bi_1pin_with_name(LB_PIN, "Left Mouse Button"));
-  bi_decl(bi_1pin_with_name(UART_TX_PIN, "UART TX"));
+  bi_decl(bi_1pin_with_name(SamMouseBit0_PIN, "Sam Mouse Bit0 Output"));
+  bi_decl(bi_1pin_with_name(SamMouseBit1_PIN, "Sam Mouse Bit1 Output"));
+  bi_decl(bi_1pin_with_name(SamMouseBit2_PIN, "Sam Mouse Bit2 Output"));
+  bi_decl(bi_1pin_with_name(SamMouseBit3_PIN, "Sam Mouse Bit3 Output"));
+  bi_decl(bi_1pin_with_name(SamMouseBit4_PIN, "Sam Mouse Bit4 Output"));
+  bi_decl(bi_1pin_with_name(RDMSEL_PIN, "Sam Mouse RDMSEL input"));
   bi_decl(bi_1pin_with_name(UART_RX_PIN, "UART RX"));
-  bi_decl(bi_1pin_with_name(PIO_USB_DP_PIN_DEFAULT, "PIO USB D+"));
-  bi_decl(bi_1pin_with_name(PIO_USB_DP_PIN_DEFAULT + 1, "PIO USB D-"));
+  bi_decl(bi_1pin_with_name(UART_TX_PIN, "UART TX"));
   bi_decl(bi_1pin_with_name(STATUS_PIN, "Status LED"));
 
   // Initalize the pins
-  gpio_init(XA_PIN);
-  gpio_init(XB_PIN);
-  gpio_init(YA_PIN);
-  gpio_init(YB_PIN);
+  gpio_init(SamMouseBit0_PIN);
+  gpio_init(SamMouseBit1_PIN);
+  gpio_init(SamMouseBit2_PIN);
+  gpio_init(SamMouseBit3_PIN);
+  gpio_init(SamMouseBit4_PIN);
+  gpio_init(RDMSEL_PIN);
   gpio_init(STATUS_PIN);
   DEBUG_PRINT(("Pins initalised\r\n"));
 
   // Set pin directions
-  gpio_set_dir(XA_PIN, GPIO_OUT);
-  gpio_set_dir(XB_PIN, GPIO_OUT);
-  gpio_set_dir(YA_PIN, GPIO_OUT);
-  gpio_set_dir(YB_PIN, GPIO_OUT);
-  gpio_set_dir(STATUS_PIN, GPIO_OUT);
+// these 4 start out as INputs because we need them to float when they're non-zero. 
+// We set the output value to 0, and use set_dir_masked to set any 0 pins to output
+  gpio_set_dir_masked(SamMousePinsMask | (1<<RDMSEL_PIN) | (1<<STATUS_PIN), SamMousePinsMask | (1<<STATUS_PIN)); // mouse and status pins are outbound, RDMSEL is inbound
+  gpio_pull_up(RDMSEL_PIN); // the internal pullup is about 50-80kOhm, which won't be anywhere near enough to not require our 300ohm pullup resistor, but let's not fight it at least
+
   DEBUG_PRINT(("Pin directions set\r\n"));
-
-  // Set the pins low
-  gpio_put(XA_PIN, 0);
-  gpio_put(XB_PIN, 0);
-  gpio_put(YA_PIN, 0);
-  gpio_put(YB_PIN, 0);
+  gpio_put_masked(SamMousePinsMask, 0);
   gpio_put(STATUS_PIN, 0);
-  DEBUG_PRINT(("Pins pulled low\r\n"));
-}
 
+}
 //--------------------------------------------------------------------+
 // Host HID
 //--------------------------------------------------------------------+
@@ -310,27 +338,9 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_re
   (void)desc_report;
   (void)desc_len;
   DEBUG_PRINT(("USB Device Attached\r\n"));
-
-  // Interface protocol (hid_interface_protocol_enum_t)
-  uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
-
-  DEBUG_PRINT(("Protocol: %d\r\n", itf_protocol));
-
-  // Receive report from boot mouse only
-  // tuh_hid_report_received_cb() will be invoked when report is available
-  if (itf_protocol == HID_ITF_PROTOCOL_MOUSE)
-  {
-    // Set protocol to full report mode for mouse wheel support
-    tuh_hid_set_protocol(dev_addr, instance, 1);
-    if (tuh_hid_receive_report(dev_addr, instance))
-    {
-      add_repeating_timer_ms(-1, timer1_callback, NULL, &timer1);
-      add_repeating_timer_ms(-1, timer2_callback, NULL, &timer2);
-      DEBUG_PRINT(("Mouse Timers Running\r\n"));
-      blink_status(3);
-    }
-  }
-  gpio_put(STATUS_PIN, 1); // Turn status LED on
+  mousedev_addr = dev_addr;
+  mouseinstance = instance;
+  justmounted = true;
 }
 
 // Invoked when device with hid interface is un-mounted
@@ -339,21 +349,19 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
   (void)dev_addr;
   (void)instance;
   DEBUG_PRINT(("USB Device Removed\r\n"));
+  mouseLive = false;
   gpio_put(STATUS_PIN, 0); // Turn status LED off
-  bool cancelled = cancel_repeating_timer(&timer1);
-  DEBUG_PRINT(("Mouse Timer1 Cancelled... %d\r\n", cancelled));
-  (void)cancelled;
-  cancelled = cancel_repeating_timer(&timer2);
-  DEBUG_PRINT(("Mouse Timer2 Cancelled... %d\r\n", cancelled));
-  (void)cancelled;
+  // don't bother changing the interrupt status - we'll just report no movement
 }
 
 static void processMouse(uint8_t dev_addr, hid_mouse_report_t const *report)
 {
+  int16_t tmpsamXDelta, tmpsamYDelta;
   // Blink status LED
   // gpio_put(STATUS_PIN, 0);
   (void)dev_addr;
-  // Handle scroll wheel
+  // sam driver doesn't have any concept of scroll wheel. we could add it, but software support isn't there
+/*  // Handle scroll wheel
   if (report->wheel)
   {
     gpio_init(MB_PIN);
@@ -367,77 +375,20 @@ static void processMouse(uint8_t dev_addr, hid_mouse_report_t const *report)
   {
     gpio_deinit(MB_PIN);
   }
-
+*/
   // Handle mouse buttons
-  // Check for left mouse button
-  if (report->buttons & MOUSE_BUTTON_LEFT)
-  {
-    gpio_init(LB_PIN);
-    gpio_set_dir(LB_PIN, GPIO_OUT);
-    gpio_put(LB_PIN, 0);
-    DEBUG_PRINT(("Left button press\r\n"));
-  }
-  else
-  {
-    gpio_deinit(LB_PIN);
-  }
-
-  // Check for middle mouse button
-  if (report->buttons & MOUSE_BUTTON_MIDDLE)
-  {
-    gpio_init(MB_PIN);
-    gpio_set_dir(MB_PIN, GPIO_OUT);
-    gpio_put(MB_PIN, 0);
-    DEBUG_PRINT(("Middle button press\r\n"));
-  }
-  else
-  {
-    gpio_deinit(MB_PIN);
-  }
-
-  // Check for right mouse button
-  if (report->buttons & MOUSE_BUTTON_RIGHT)
-  {
-    gpio_init(RB_PIN);
-    gpio_set_dir(RB_PIN, GPIO_OUT);
-    gpio_put(RB_PIN, 0);
-    DEBUG_PRINT(("Right button press\r\n"));
-  }
-  else
-  {
-    gpio_deinit(RB_PIN);
-  }
+  samButts = ((report->buttons & 1) | ((report->buttons << 1) & 4) | ((report->buttons >> 1) & 2)) ^ 0xf;
+// usb mouse buttons are active-high, we want active-low. 
+// We swap bits 1 and 2 because USB is left-right-centre, sam is left-centre-right
 
   // Handle mouse movement
-  if (report->x > 0 && mouseDirectionX == 0)
-  {
-    mouseDistanceX = 0;
-    mouseDirectionX = 1;
-    DEBUG_PRINT(("Mouse Movement X++\r\n"));
-  }
-  else if (report->x < 0 && mouseDirectionX == 1)
-  {
-    mouseDistanceX = 0;
-    mouseDirectionX = 0;
-    DEBUG_PRINT(("Mouse Movement X--\r\n"));
-  }
-
-  if (report->y > 0 && mouseDirectionY == 0)
-  {
-    mouseDistanceY = 0;
-    mouseDirectionY = 1;
-    DEBUG_PRINT(("Mouse Movement Y++\r\n"));
-  }
-  else if (report->y < 0 && mouseDirectionY == 1)
-  {
-    mouseDistanceY = 0;
-    mouseDirectionY = 0;
-    DEBUG_PRINT(("Mouse Movement Y--\r\n"));
-  }
-
-  // Process mouse X and Y movement
-  processMouseMovement(report->x, MOUSEX);
-  processMouseMovement(report->y, MOUSEY);
+  mutex_enter_blocking(&samDeltaMutex);
+  tmpsamXDelta = samXDelta + ((report->x + 1) >> 2);
+  tmpsamYDelta = samYDelta + ((report->y + 1) >> 2);
+  // we only report back 12-bit values, so restrict the allowable range
+  samXDelta = (tmpsamXDelta > 0x7ff) ? 0x7ff : ((tmpsamXDelta < -0x7ff) ? -0x7ff : (int16_t)tmpsamXDelta);
+  samYDelta = (tmpsamYDelta > 0x7ff) ? 0x7ff : ((tmpsamYDelta < -0x7ff) ? -0x7ff : (int16_t)tmpsamYDelta);
+  mutex_exit(&samDeltaMutex);
 }
 
 void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *report, uint16_t len)
@@ -458,47 +409,5 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
   if (!tuh_hid_receive_report(dev_addr, instance))
   {
     return;
-  }
-}
-
-// Process the mouse movement units from the USB report
-void processMouseMovement(int8_t movementUnits, uint8_t axis)
-{
-  // Set the mouse movement direction and record the movement units
-  if (movementUnits > 0)
-  {
-    // Moving in the positive direction
-    // Add the movement units to the quadrature output buffer
-    if (axis == MOUSEX)
-      mouseDistanceX += movementUnits;
-    else
-      mouseDistanceY += movementUnits;
-  }
-  else if (movementUnits < 0)
-  {
-    // Moving in the negative direction
-    // Add the movement units to the quadrature output buffer
-    if (axis == MOUSEX)
-      mouseDistanceX += -movementUnits;
-    else
-      mouseDistanceY += -movementUnits;
-  }
-  else
-  {
-    if (axis == MOUSEX)
-      mouseDistanceX = 0;
-    else
-      mouseDistanceY = 0;
-  }
-  // Apply the quadrature output buffer limit
-  if (axis == MOUSEX)
-  {
-    if (mouseDistanceX > Q_BUFFERLIMIT)
-      mouseDistanceX = Q_BUFFERLIMIT;
-  }
-  else
-  {
-    if (mouseDistanceY > Q_BUFFERLIMIT)
-      mouseDistanceY = Q_BUFFERLIMIT;
   }
 }
