@@ -25,6 +25,7 @@ pico_sdk_init()
 set(target_name rp2040_mouse)
 add_executable(${target_name})
 
+pico_generate_pio_header(${target_name} ${CMAKE_CURRENT_LIST_DIR}/sam_mouse.pio)
 target_sources(${target_name} PRIVATE
  main.c
  )
@@ -46,5 +47,5 @@ target_compile_options(${target_name} PRIVATE -Wall -Wextra)
 # needed so tinyusb can find tusb_config.h
 target_include_directories(${target_name} PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 
-target_link_libraries(${target_name} PRIVATE pico_stdlib pico_multicore tinyusb_host tinyusb_board)
+target_link_libraries(${target_name} PRIVATE pico_stdlib pico_multicore hardware_pio tinyusb_host tinyusb_board)
 pico_add_extra_outputs(${target_name})

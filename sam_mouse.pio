@@ -1,0 +1,107 @@
+.program sam_mouse
+
+; State: wait for first rising edge, IRQ CPU, then for each subsequent rising edge:
+; - pull a word (blocking)
+; - out the first 5 bits to pins
+; - use next 11 bits as a timeout value
+; - out the next 5 bits to pins
+; - use last 11 bits as a timeout value
+; repeat 4 times, then start again
+; Between edges, run a timeout loop: if pin doesn’t go high before X expires, reset.
+    set pindirs 0b11111
+    pull block ; first word should be the timeout value on its own
+    mov x,osr
+.wrap_target
+wait_first:
+    ; we start off with pins high
+    set pins, 0b11111
+    wait 1 gpio 22 ;; RDMSEL is active
+    set y, 7 ;; although we have 8 nibbles, "jmp y--" decreases _after_ the test, so we start with one less
+writepins:
+    pull noblock
+    wait 0 gpio 22
+    out pins, 5       ; shift next nibble
+wait_next1:
+    jmp pin, have_edge1     ;;; hang around until we see RDMSEL again
+    jmp x--, wait_next1 [0] ;;; or until we timeout
+
+    jmp timeout       ; not all nibbles sent within 40uS
+;    wait 1 gpio 22 ; for now, forget timeouts
+have_edge1:
+;; ok, we've seen RDMSEL again
+    out x,11 ;;; so reset our timeout counter in x (by grabbing it from the fifo)
+;; this test for y isn't really necessary if we have an even number - we could just 
+;; use y=4 and only test it after every pull, but i'm not sure if we need 9 or 8 values    
+    jmp y--, notfinished
+    jmp allnibscomplete
+notfinished:
+    wait 0 gpio 22 ;; and wait for RDMSEL to go inactive
+
+    out pins, 5       ; shift next nibble
+wait_next2:
+    jmp pin, have_edge2     ;;; hang around until we see RDMSEL again
+    jmp x--, wait_next2 [1] ;;; or until we timeout
+
+    jmp timeout       ; not all nibbles sent
+;    wait 1 gpio 22 ; for now, forget timeouts
+have_edge2:
+    out x, 11
+    jmp y--, writepins ;;; do the next nibble
+allnibscomplete:
+    irq wait 1   ; let the CPU know we've read all 8 nibs, so to clear the data, and send the new state
+    jmp wait_first
+
+timeout:
+; remove the remaining words from the fifo, and start again
+    out x,5 ; skip this nibble
+    out x,11 ; get the timeout value ready for the next loop
+    pull noblock ;; could loop around y-- doing this
+    pull noblock ;; but this is faster and simpler
+    pull noblock ;; albeit one instruction more
+    irq wait 0 ; let the CPU know we've given up on this data, so to not clear the deltas, but to send new data anyway
+;    jmp wait_first
+.wrap
+
+
+% c-sdk {
+
+// Helper function (for use in C program) to initialize this PIO program
+void sam_mouse_pio_init(void) {
+  // Assemble & load program
+  uint offset = pio_add_program(sam_pio, &sam_mouse_program);
+
+  // Configure SM
+  pio_sm_config c = sam_mouse_program_get_default_config(offset);
+  sm_config_set_out_shift(&c, true, false, 32); // shift right, autopull disabled
+  sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX); // we only need a TX fifo, so this way we get an 8-word fifo
+  sm_config_set_clkdiv(&c, 1);
+  sm_config_set_jmp_pin (&c, RDMSEL_PIN);
+  sm_config_set_out_pins(&c, SamMouseBit0_PIN, 5);
+  sm_config_set_set_pins(&c, SamMouseBit0_PIN, 5);
+
+  // Init pins
+  for (int i = 0; i < 5; i++) {
+    pio_gpio_init(sam_pio, SamMouseBit0_PIN + i);
+// because our output values are going through NAND gates, we need to send a 0 when we want a 1 and vice versa
+    gpio_set_outover(SamMouseBit0_PIN + i, GPIO_OVERRIDE_INVERT); 
+  }
+  pio_gpio_init(sam_pio, RDMSEL_PIN);
+
+  // configure the state machine
+  pio_sm_init(sam_pio, sam_sm, offset, &c);
+
+  pio_sm_set_pindirs_with_mask(sam_pio, sam_sm, SamMousePinsMask, SamMousePinsMask | (1<<RDMSEL_PIN));
+
+
+  irq_set_exclusive_handler(sam_pio == pio0 ? PIO0_IRQ_0 : PIO1_IRQ_0, pio_irq_handler);
+  irq_set_enabled(sam_pio == pio0 ? PIO0_IRQ_0 : PIO1_IRQ_0, true);
+  pio_set_irq0_source_mask_enabled(sam_pio, (1 << pis_interrupt0)|(1 << pis_interrupt1), true);
+
+  // start up the SM
+  pio_sm_set_enabled(sam_pio, sam_sm, true);
+// send the timeout on its own just to start with
+  pio_sm_put(sam_pio, sam_sm, TIMEOUT_X);
+
+}
+
+%}
