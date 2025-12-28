@@ -28,6 +28,7 @@
 #include <stdio.h>
 
 #include "pico/stdlib.h"
+#include "hardware/clocks.h"
 #include "pico/multicore.h"
 #include "pico/bootrom.h"
 #include "pico/binary_info.h"
