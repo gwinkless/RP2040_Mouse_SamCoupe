@@ -36,8 +36,8 @@ Once the build completes you will see the following:
 
 ```
 Memory region         Used Size  Region Size  %age Used
-           FLASH:       37536 B         2 MB      1.79%
-             RAM:        8220 B       256 KB      3.14%
+           FLASH:       39080 B         2 MB      1.86%
+             RAM:        8320 B       256 KB      3.17%
        SCRATCH_X:          2 KB         4 KB     50.00%
        SCRATCH_Y:          2 KB         4 KB     50.00%
 ```
