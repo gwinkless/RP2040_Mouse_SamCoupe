@@ -42,7 +42,9 @@
 
 #define VERSION "1.0"
 
-#include "pio_usb.h"
+//#include "pio_usb.h"
+#include "bsp/rp2040/board.h"
+#include "bsp/board_api.h"
 #include "tusb.h"
 #include "main.h"
 
