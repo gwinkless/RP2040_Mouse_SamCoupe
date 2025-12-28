@@ -12,6 +12,7 @@ This is the software component of my Sam Coupé version of Darren's RP2040 based
 
 Hardware will be available from PCBWay once I've finished designing it, or you can build your own version with a Pico, a DIN8 (262°) connector, two 74HC03 open-drain NAND gates, a couple of 100nF capacitors, a 300Ohm pullup resistor and a USB OTG adapter.
 
+You will probably want to try the (theoretically mildly more experimental) PIO branch, which uses the RP2040 PIO mechanism to handle the output to the Coupé and therefore allows us to drop the CPU speed and lower the power requirements.
 
 #### Why did you make it?
 
