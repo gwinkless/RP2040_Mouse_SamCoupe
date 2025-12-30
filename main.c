@@ -97,8 +97,10 @@ SamRDMTightLoop () {
 // for subsequent reads before the timeout expires we send f, buttons, ydelta>>8, (ydelta>>4) & f, ydelta&f, xdelta>>8, (xdelta>>8)&f, xdelta&f, f
 // if there's longer than 30uS between two reads then we start again
 
-// it would actually makes more sense to output the next data values to the pins once RDMSel goes inactive, so that
-// once it goes active again the data is already waiting. that way we don't need to worry about response times
+// it actually makes more sense to output the next data values to the pins once RDMSel goes inactive, so that
+// once it goes active again the data is already waiting; that way we don't need to worry about response times
+// so we do that now - each state we just set "nextpins" and then wait for RDMSEL to go low and
+// write the next value immediately afterwards
 
 
     while (!gpio_get(RDMSEL_PIN)) { // our pin is inverted, so we're testing for high
