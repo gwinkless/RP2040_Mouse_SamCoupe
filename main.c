@@ -374,7 +374,7 @@ void initialiseHardware(void)
   gpio_set_outover(SamMouseBit4_PIN, GPIO_OVERRIDE_INVERT);
 
   DEBUG_PRINT(("Pin directions set\r\n"));
-  gpio_put_masked(SamMousePinsMask, 0);
+  gpio_put_masked(SamMousePinsMask, SamMousePinsMask);
   gpio_put(STATUS_PIN, 0);
 
 }
