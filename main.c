@@ -288,9 +288,12 @@ main()
   DEBUG_PRINT(("Hardware Initalized\r\n"));
 
   // Blink Status LED and wait for everything to settle
-  blink_status(10);
+//  blink_status(10);
   // can't believe this (5 seconds) needs to be so long. Also, we don't really care if we run before everything's ready
   // now we (core0) go and sit in a tight loop waiting for RDMSel to change
+// there's a race here where if the mouse is already plugged in (or plugged in during our startup wait) we
+// end up overriding the status-1 that the usb handler sets with our blink_status. So we just do it here too.
+//  if (mouseLive) gpio_put(STATUS_PIN, 1); 
   SamRDMTightLoop();
 }
 
