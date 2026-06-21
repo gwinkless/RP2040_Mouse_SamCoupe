@@ -40,10 +40,23 @@
 // later for joypad mapping to ctrl+up+down+left+right we'll need it
 #define SamMouseBit4_PIN 9
 #define SamMousePinsMask ((1<<SamMouseBit0_PIN)|(1<<SamMouseBit1_PIN)|(1<<SamMouseBit2_PIN)|(1<<SamMouseBit3_PIN)|(1<<SamMouseBit4_PIN))
-// the (inverted) RDM select pin goes next
-#define RDMSEL_PIN 22
-// Mouse Status LED. 7 on the original rp2040mouse board, but we're on a pico now, so we'll use the pico LED On GPIO25
-#define STATUS_PIN 25
+// joystick pins
+/*#define JoystickUp_PIN 25
+#define JoystickDown_PIN 26
+#define JoystickLeft_PIN 27
+#define JoystickRight_PIN 28
+#define JoystickFire_PIN 29
+*/
+// these for the final board
+#define JoystickFire_PIN 25
+#define JoystickUp_PIN 26
+#define JoystickDown_PIN 27
+#define JoystickLeft_PIN 28
+#define JoystickRight_PIN 29
+
+
+
+#define JoystickPinsMask ((1<<JoystickUp_PIN)|(1<<JoystickDown_PIN)|(1<<JoystickLeft_PIN)|(1<<JoystickRight_PIN)|(1<<JoystickFire_PIN))
 
 // Function prototypes
 void initialiseHardware(void);

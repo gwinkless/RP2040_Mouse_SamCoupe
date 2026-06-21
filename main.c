@@ -76,6 +76,17 @@ auto_init_mutex(samDeltaMutex);
   } while (0)
 #define CFG_TUSB_DEBUG 0
 #endif
+unsigned long
+getJSPins () {
+  unsigned long nextpins = gpio_get_all();
+  nextpins = 
+              (((nextpins >> JoystickFire_PIN)  & 1) << 0) |
+              (((nextpins >> JoystickUp_PIN)    & 1) << 1) |
+              (((nextpins >> JoystickDown_PIN)  & 1) << 2) |
+              (((nextpins >> JoystickLeft_PIN)  & 1) << 3) |
+              (((nextpins >> JoystickRight_PIN) & 1) << 4);
+  return nextpins;
+}
 
 // Cookie's BoaI article says that the original hardware resets after about 30uS
 // we'll be kind and make it 40uS
@@ -88,6 +99,7 @@ SamRDMTightLoop () {
   static bool ledstate=0;
 	static int copyXDelta, copyYDelta;
   static unsigned char copyButtState;
+  unsigned char jspins;
   int nextpins = 0;
   while (1) {
 
@@ -105,21 +117,26 @@ SamRDMTightLoop () {
 
     while (!gpio_get(RDMSEL_PIN)) { // our pin is inverted, so we're testing for high
       uint32_t newtm;
-// if we timeout in a non-zero state while waiting for active RDMSEL, we reset the state to 0 and clear the GPIOs
-// so that when we do go active the values will already be correct
+// if we timeout in a non-zero state while waiting for active RDMSEL, we reset the state to 0 and set the GPIOs
+// to the JS pins so that when we do go active the values will already be correct
       if (rdmstate
         && ((newtm = time_us_32()) > LastRDMSelTimeout)
         && ((LastRDMSelTimeout > SamMouseTimeout_us) || (newtm < (3 * SamMouseTimeout_us)))
       ) {
-        if (rdmstate > 1) gpio_put(STATUS_PIN, ledstate ^= 1); // flip the LED every time we timeout, unless we only read a single value
+        //if (rdmstate > 1) gpio_put(STATUS_PIN, ledstate ^= 1); // for debugging flip the LED every time we timeout, unless we only read a single value
         rdmstate = 0;
-        gpio_put_masked(SamMousePinsMask, 0);
+        nextpins = getJSPins();
+        gpio_put_masked(SamMousePinsMask, ((nextpins&1)<<SamMouseBit0_PIN)
+                                        | ((nextpins&2)<<(SamMouseBit1_PIN-1))
+                                        | ((nextpins&4)<<(SamMouseBit2_PIN-2))
+                                        | ((nextpins&8)<<(SamMouseBit3_PIN-3))
+                                        | ((nextpins&16)<<(SamMouseBit4_PIN-4)));
       }
     }
-//    gpio_put(STATUS_PIN, ledstate^=1);
     // reset the inter-request timeout
     LastRDMSelTimeout = time_us_32() + SamMouseTimeout_us;
     
+    if (mouseLive) {
     switch (rdmstate) {
       default: // shouldn't need this (rdmstate will only ever be 0-8), but just in case...
         rdmstate = 0;
@@ -144,50 +161,62 @@ SamRDMTightLoop () {
         }
 
         copyButtState = samButts;
-
+          jspins = getJSPins();
+          if (((copyButtState & 7) == 7) && (copyYDelta == 0) && (copyXDelta == 0) && (jspins != 0x1f)) {
+            // if the mouse isn't being used but the joystick is, use the joystick for every read. That way code that
+            // reads the same cursors port multiple times in very quick succession (hello Howard!) won't break,
+            // as long as you don't wiggle the mouse
+            nextpins = jspins;
+            rdmstate = 8;
+          } else {
 // nextpins is the value we set the pins to in the _next_ state: we actually
 // set them as soon as this active-state ends, because the NAND gates will
 // block off the values until RDMSEL goes active again. This way we get to be
 // instantly ready, while running the rp2040 at a lower speed (and thus
 // saving power)
+            nextpins = 0x1f;
+          }
 
-        nextpins = 0xf;
         break;
       case 1:
-        nextpins = copyButtState;
+          nextpins = 0x10 | copyButtState;
         break;
       case 2:
-        nextpins = (copyYDelta >> 8);
+          nextpins = 0x10 | ((copyYDelta >> 8) & 0xf);
         break;
       case 3:
-        nextpins = (copyYDelta >> 4);
+          nextpins = 0x10 | ((copyYDelta >> 4) & 0xf);
         break;
       case 4:
-        nextpins = (copyYDelta);
+          nextpins = 0x10 | ((copyYDelta) & 0xf);
         break;
       case 5:
-        nextpins = (copyXDelta >> 8);
+          nextpins = 0x10 | ((copyXDelta >> 8) & 0xf);
         break;
       case 6:
-        nextpins = (copyXDelta >> 4);
+          nextpins = 0x10 | ((copyXDelta >> 4) & 0xf);
         break;
       case 7:
-        nextpins = (copyXDelta);
+          nextpins = 0x10 | ((copyXDelta) & 0xf);
         break;
       case 8:
-        nextpins = 0xf;
+          nextpins = getJSPins();
         copyYDelta = 0;
         copyXDelta = 0;
         break;
     }
     rdmstate = (rdmstate + 1) % 9;
-    if (!mouseLive) nextpins = 0xf; // if the mouse isn't plugged in, then we just keep everything high
+    } else {
+// if the mouse isn't plugged in, then use the joystick values
+      nextpins = getJSPins();
+    }
     while (gpio_get(RDMSEL_PIN));
     // rdmsel has gone inactive again, so we move to the next state and output the values for that state
     gpio_put(SamMouseBit0_PIN, (nextpins & 1));
     gpio_put(SamMouseBit1_PIN, (nextpins & 2));
     gpio_put(SamMouseBit2_PIN, (nextpins & 4));
     gpio_put(SamMouseBit3_PIN, (nextpins & 8));
+    gpio_put(SamMouseBit4_PIN, (nextpins & 16));
   }
 }
 
@@ -318,15 +347,26 @@ void initialiseHardware(void)
   gpio_init(SamMouseBit4_PIN);
   gpio_init(RDMSEL_PIN);
   gpio_init(STATUS_PIN);
-  DEBUG_PRINT(("Pins initalised\r\n"));
+  gpio_init(JoystickUp_PIN);
+  gpio_init(JoystickDown_PIN);
+  gpio_init(JoystickLeft_PIN);
+  gpio_init(JoystickRight_PIN);
+  gpio_init(JoystickFire_PIN);
+  DEBUG_PRINT(("Pins initialised\r\n"));
 
   // Set pin directions
-  gpio_set_dir_masked(SamMousePinsMask | (1<<RDMSEL_PIN) | (1<<STATUS_PIN), SamMousePinsMask | (1<<STATUS_PIN)); // mouse and status pins are outbound, RDMSEL is inbound
+  gpio_set_dir_masked(JoystickPinsMask | SamMousePinsMask | (1<<RDMSEL_PIN) | (1<<STATUS_PIN), SamMousePinsMask | (1<<STATUS_PIN)); // mouse and status pins are outbound, RDMSEL and joystick are inbound
+  gpio_pull_up(RDMSEL_PIN); // the internal pullup is about 50-80kOhm, which won't be anywhere near enough to not require our 3kOhm pullup resistor, but let's not fight it at least
+  gpio_pull_up(JoystickFire_PIN);     // are we going to need external pullups on these too?
+  gpio_pull_up(JoystickUp_PIN);       //
+  gpio_pull_up(JoystickDown_PIN);     //
+  gpio_pull_up(JoystickLeft_PIN);     //
+  gpio_pull_up(JoystickRight_PIN);    //
   gpio_set_outover(SamMouseBit0_PIN, GPIO_OVERRIDE_INVERT);
   gpio_set_outover(SamMouseBit1_PIN, GPIO_OVERRIDE_INVERT);
   gpio_set_outover(SamMouseBit2_PIN, GPIO_OVERRIDE_INVERT);
   gpio_set_outover(SamMouseBit3_PIN, GPIO_OVERRIDE_INVERT);
-  gpio_pull_up(RDMSEL_PIN); // the internal pullup is about 50-80kOhm, which won't be anywhere near enough to not require our 300ohm pullup resistor, but let's not fight it at least
+  gpio_set_outover(SamMouseBit4_PIN, GPIO_OVERRIDE_INVERT);
 
   DEBUG_PRINT(("Pin directions set\r\n"));
   gpio_put_masked(SamMousePinsMask, 0);
