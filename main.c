@@ -137,30 +137,30 @@ SamRDMTightLoop () {
     LastRDMSelTimeout = time_us_32() + SamMouseTimeout_us;
     
     if (mouseLive) {
-    switch (rdmstate) {
-      default: // shouldn't need this (rdmstate will only ever be 0-8), but just in case...
-        rdmstate = 0;
-        // falls through
-      case 0:
-        mutex_enter_blocking(&samDeltaMutex);
-        // we add the delta values to our copy because if the last read didn't complete we'll want to remember it
-        copyYDelta -= samYDelta; // we negate the Y delta because Sam thinks up is positive, while USB thinks up is negative
-        samYDelta = 0;
-        copyXDelta += samXDelta;
-        samXDelta = 0;
-        mutex_exit(&samDeltaMutex);
-        if (copyXDelta > 0x7ff) {
-          copyXDelta = 0x7ff;
-        } else if (copyXDelta < -0x7ff) {
-          copyXDelta = -0x7ff;
-        }
-        if (copyYDelta > 0x7ff) {
-          copyYDelta = 0x7ff;
-        } else if (copyYDelta < -0x7ff) {
-          copyYDelta = -0x7ff;
-        }
+      switch (rdmstate) {
+        default: // shouldn't need this (rdmstate will only ever be 0-8), but just in case...
+          rdmstate = 0;
+          // falls through
+        case 0:
+          mutex_enter_blocking(&samDeltaMutex);
+          // we add the delta values to our copy because if the last read didn't complete we'll want to remember it
+          copyYDelta -= samYDelta; // we negate the Y delta because Sam thinks up is positive, while USB thinks up is negative
+          samYDelta = 0;
+          copyXDelta += samXDelta;
+          samXDelta = 0;
+          mutex_exit(&samDeltaMutex);
+          if (copyXDelta > 0x7ff) {
+            copyXDelta = 0x7ff;
+          } else if (copyXDelta < -0x7ff) {
+            copyXDelta = -0x7ff;
+          }
+          if (copyYDelta > 0x7ff) {
+            copyYDelta = 0x7ff;
+          } else if (copyYDelta < -0x7ff) {
+            copyYDelta = -0x7ff;
+          }
 
-        copyButtState = samButts;
+          copyButtState = samButts;
           jspins = getJSPins();
           if (((copyButtState & 7) == 7) && (copyYDelta == 0) && (copyXDelta == 0) && (jspins != 0x1f)) {
             // if the mouse isn't being used but the joystick is, use the joystick for every read. That way code that
@@ -169,43 +169,43 @@ SamRDMTightLoop () {
             nextpins = jspins;
             rdmstate = 8;
           } else {
-// nextpins is the value we set the pins to in the _next_ state: we actually
-// set them as soon as this active-state ends, because the NAND gates will
-// block off the values until RDMSEL goes active again. This way we get to be
-// instantly ready, while running the rp2040 at a lower speed (and thus
-// saving power)
+  // nextpins is the value we set the pins to in the _next_ state: we actually
+  // set them as soon as this active-state ends, because the NAND gates will
+  // block off the values until RDMSEL goes active again. This way we get to be
+  // instantly ready, while running the rp2040 at a lower speed (and thus
+  // saving power)
             nextpins = 0x1f;
           }
 
-        break;
-      case 1:
+          break;
+        case 1:
           nextpins = 0x10 | copyButtState;
-        break;
-      case 2:
+          break;
+        case 2:
           nextpins = 0x10 | ((copyYDelta >> 8) & 0xf);
-        break;
-      case 3:
+          break;
+        case 3:
           nextpins = 0x10 | ((copyYDelta >> 4) & 0xf);
-        break;
-      case 4:
+          break;
+        case 4:
           nextpins = 0x10 | ((copyYDelta) & 0xf);
-        break;
-      case 5:
+          break;
+        case 5:
           nextpins = 0x10 | ((copyXDelta >> 8) & 0xf);
-        break;
-      case 6:
+          break;
+        case 6:
           nextpins = 0x10 | ((copyXDelta >> 4) & 0xf);
-        break;
-      case 7:
+          break;
+        case 7:
           nextpins = 0x10 | ((copyXDelta) & 0xf);
-        break;
-      case 8:
+          break;
+        case 8:
           nextpins = getJSPins();
-        copyYDelta = 0;
-        copyXDelta = 0;
-        break;
-    }
-    rdmstate = (rdmstate + 1) % 9;
+          copyYDelta = 0;
+          copyXDelta = 0;
+          break;
+      }
+      rdmstate = (rdmstate + 1) % 9;
     } else {
 // if the mouse isn't plugged in, then use the joystick values
       nextpins = getJSPins();
@@ -254,7 +254,7 @@ void core1_main()
 // board_init will be setting the clock speed to 133mhz, apparently, so we need to do any speed set here
 // unfortunately it looks like 133 is just about the minimum required. So we'll leave it alone for now.  
 //  set_sys_clock_khz(100000, true); 
-
+  
   while (true)
   {
     tuh_task(); // tinyusb host task
@@ -280,6 +280,8 @@ void core1_main()
         mouseLive = true;
       } else {
         blink_status(10+itf_protocol);
+        // we need to debug this further. There's a suggestion that you have to unmount the composite device and it will remount. Dunno.
+        // Best way will be to use USB_DEBUG on linux and see how that behaves.
       }
     }
   }
