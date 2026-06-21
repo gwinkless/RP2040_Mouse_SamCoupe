@@ -184,12 +184,10 @@ SamRDMTightLoop () {
     if (!mouseLive) nextpins = 0xf; // if the mouse isn't plugged in, then we just keep everything high
     while (gpio_get(RDMSEL_PIN));
     // rdmsel has gone inactive again, so we move to the next state and output the values for that state
-  // these values below are all inverted (false:true, not true:false) because we're using open-collector
-  // NAND gates: RDMSEL (active high) NAND 1 becomes 0
-    gpio_put(SamMouseBit0_PIN, (nextpins & 1) ? false : true);
-    gpio_put(SamMouseBit1_PIN, (nextpins & 2) ? false : true);
-    gpio_put(SamMouseBit2_PIN, (nextpins & 4) ? false : true);
-    gpio_put(SamMouseBit3_PIN, (nextpins & 8) ? false : true);
+    gpio_put(SamMouseBit0_PIN, (nextpins & 1));
+    gpio_put(SamMouseBit1_PIN, (nextpins & 2));
+    gpio_put(SamMouseBit2_PIN, (nextpins & 4));
+    gpio_put(SamMouseBit3_PIN, (nextpins & 8));
   }
 }
 
@@ -320,9 +318,11 @@ void initialiseHardware(void)
   DEBUG_PRINT(("Pins initalised\r\n"));
 
   // Set pin directions
-// these 4 start out as INputs because we need them to float when they're non-zero. 
-// We set the output value to 0, and use set_dir_masked to set any 0 pins to output
   gpio_set_dir_masked(SamMousePinsMask | (1<<RDMSEL_PIN) | (1<<STATUS_PIN), SamMousePinsMask | (1<<STATUS_PIN)); // mouse and status pins are outbound, RDMSEL is inbound
+  gpio_set_outover(SamMouseBit0_PIN, GPIO_OVERRIDE_INVERT);
+  gpio_set_outover(SamMouseBit1_PIN, GPIO_OVERRIDE_INVERT);
+  gpio_set_outover(SamMouseBit2_PIN, GPIO_OVERRIDE_INVERT);
+  gpio_set_outover(SamMouseBit3_PIN, GPIO_OVERRIDE_INVERT);
   gpio_pull_up(RDMSEL_PIN); // the internal pullup is about 50-80kOhm, which won't be anywhere near enough to not require our 300ohm pullup resistor, but let's not fight it at least
 
   DEBUG_PRINT(("Pin directions set\r\n"));
