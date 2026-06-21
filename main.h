@@ -31,29 +31,31 @@
 // Hardware map
 
 // Sam output pins
-// the mouse pins are the bottom four GPIOs
-#define SamMouseBit0_PIN 5
+// I'm an idiot for not putting these in order in my PCB, since it breaks the pio version
+// we're also swapping left+right and ctrl+down, because I'm even more of an idiot and put
+// the connector on backwards
+#define SamMouseBit0_PIN 2
 #define SamMouseBit1_PIN 6 
-#define SamMouseBit2_PIN 7
-#define SamMouseBit3_PIN 8
-// MouseBit4 isn't actually used for the sam mouse, but if we want to use it
-// later for joypad mapping to ctrl+up+down+left+right we'll need it
-#define SamMouseBit4_PIN 9
+#define SamMouseBit2_PIN 5
+#define SamMouseBit3_PIN 3
+// MouseBit4 isn't used by the sam mouse, but we want to use it
+// for the joystick to ctrl+up+down+left+right
+#define SamMouseBit4_PIN 7
+// the (inverted) RDM select pin goes next. 22 on the pico board.
+#define RDMSEL_PIN 4
 #define SamMousePinsMask ((1<<SamMouseBit0_PIN)|(1<<SamMouseBit1_PIN)|(1<<SamMouseBit2_PIN)|(1<<SamMouseBit3_PIN)|(1<<SamMouseBit4_PIN))
+// Mouse Status LED. 25 on a Pico
+#define STATUS_PIN 8
+// try to make sure the rp2040 board doesn't override our gpio25
+#undef PICO_DEFAULT_LED_PIN
+#define PICO_DEFAULT_LED_PIN STATUS_PIN
+
 // joystick pins
-/*#define JoystickUp_PIN 25
+#define JoystickUp_PIN 25
 #define JoystickDown_PIN 26
 #define JoystickLeft_PIN 27
 #define JoystickRight_PIN 28
 #define JoystickFire_PIN 29
-*/
-// these for the final board
-#define JoystickFire_PIN 25
-#define JoystickUp_PIN 26
-#define JoystickDown_PIN 27
-#define JoystickLeft_PIN 28
-#define JoystickRight_PIN 29
-
 
 
 #define JoystickPinsMask ((1<<JoystickUp_PIN)|(1<<JoystickDown_PIN)|(1<<JoystickLeft_PIN)|(1<<JoystickRight_PIN)|(1<<JoystickFire_PIN))

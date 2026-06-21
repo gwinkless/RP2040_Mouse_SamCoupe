@@ -40,11 +40,11 @@
 
 #define VERSION "1.0"
 
+#include "main.h"
 //#include "pio_usb.h"
 #include "bsp/rp2040/board.h"
 #include "bsp/board_api.h"
 #include "tusb.h"
-#include "main.h"
 
 #include "hardware/uart.h"
 #define UART_ID uart0
@@ -247,6 +247,13 @@ void core1_main()
   board_init();
 
   tuh_init(0); // 1 for pio-usb or max3421, 0 for main pico hub
+ // even though we've set PICO_DEFAULT_LED_PIN to our STATUS_PIN in main.h, the tinyusb library is prebuilt with it set to 25
+ // So we force that pin as input here. Messy, but works.
+  gpio_set_dir(25, false);
+  gpio_pull_up(25);
+// board_init will be setting the clock speed to 133mhz, apparently, so we need to do any speed set here
+// unfortunately it looks like 133 is just about the minimum required. So we'll leave it alone for now.  
+//  set_sys_clock_khz(100000, true); 
 
   while (true)
   {
@@ -282,13 +289,6 @@ int
 __attribute__((noinline, long_call, section(".time_critical"))) 
 main()
 {
-// i tried setting the clock speed lower (eg 96MHz) but it messed up everything
-// If we changed from polling to spot RDMSEL going high to using an interrupt
-// (with a timer interrupt to reset the rdmstate value after 30uS) we could probably
-// try lowering this clock rate to save power, but for now this is fine.
-  set_sys_clock_khz(125000, true);
-  stdio_init_all();
-
 // Setup Debug to UART
 #ifdef DEBUG
   gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
@@ -401,7 +401,6 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
   DEBUG_PRINT(("USB Device Removed\r\n"));
   mouseLive = false;
   gpio_put(STATUS_PIN, 0); // Turn status LED off
-  // don't bother changing the interrupt status - we'll just report no movement
 }
 
 static void processMouse(uint8_t dev_addr, hid_mouse_report_t const *report)
