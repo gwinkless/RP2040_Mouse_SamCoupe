@@ -37,9 +37,9 @@
 // Override default USB pin
 //#define PIO_USB_DP_PIN_DEFAULT 8
 
-// Configure RP2040 for slower flash
-#define PICO_XOSC_STARTUP_DELAY_MULTIPLIER 64
-#define PICO_BOOT_STAGE2_CHOOSE_GENERIC_03H 1
+// don't need to configure RP2040 for slower flash, since our flash is plenty fast enough, thanks
+//#define PICO_XOSC_STARTUP_DELAY_MULTIPLIER 64
+//#define PICO_BOOT_STAGE2_CHOOSE_GENERIC_03H 1
 
 #define VERSION "1.0"
 
