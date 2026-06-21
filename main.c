@@ -212,11 +212,16 @@ SamRDMTightLoop () {
     }
     while (gpio_get(RDMSEL_PIN));
     // rdmsel has gone inactive again, so we move to the next state and output the values for that state
-    gpio_put(SamMouseBit0_PIN, (nextpins & 1));
-    gpio_put(SamMouseBit1_PIN, (nextpins & 2));
-    gpio_put(SamMouseBit2_PIN, (nextpins & 4));
-    gpio_put(SamMouseBit3_PIN, (nextpins & 8));
-    gpio_put(SamMouseBit4_PIN, (nextpins & 16));
+    gpio_put_masked(SamMousePinsMask, ((nextpins&1)<<SamMouseBit0_PIN)
+                                    | ((nextpins&2)<<(SamMouseBit1_PIN-1))
+                                    | ((nextpins&4)<<(SamMouseBit2_PIN-2))
+                                    | ((nextpins&8)<<(SamMouseBit3_PIN-3))
+                                    | ((nextpins&16)<<(SamMouseBit4_PIN-4)));
+//    gpio_put(SamMouseBit0_PIN, (nextpins & 1));
+//    gpio_put(SamMouseBit1_PIN, (nextpins & 2));
+//    gpio_put(SamMouseBit2_PIN, (nextpins & 4));
+//    gpio_put(SamMouseBit3_PIN, (nextpins & 8));
+//    gpio_put(SamMouseBit4_PIN, (nextpins & 16));
   }
 }
 
