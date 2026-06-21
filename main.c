@@ -253,7 +253,7 @@ main() {
   blink_status(2);
   // Blink Status LED and wait for everything to settle
   // can't believe this (5 seconds) needs to be so long. Also, we don't really care if we run before everything's ready
-  blink_status(8);
+//  blink_status(8);
   sam_mouse_pio_init();
   pio_sm_put_blocking(sam_pio, sam_sm, (TIMEOUT_X << 5) | (TIMEOUT_X << 21));
   pio_sm_put_blocking(sam_pio, sam_sm, (TIMEOUT_X << 5) | (TIMEOUT_X << 21));
