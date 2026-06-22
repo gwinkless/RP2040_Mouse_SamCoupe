@@ -43,11 +43,11 @@
 
 #define VERSION "1.0"
 
+#include "main.h"
 //#include "pio_usb.h"
 #include "bsp/rp2040/board.h"
 #include "bsp/board_api.h"
 #include "tusb.h"
-#include "main.h"
 
 #include "hardware/uart.h"
 #define UART_ID uart0
@@ -179,6 +179,13 @@ void core1_main() {
   board_init();
 
   tuh_init(0); // 1 for pio-usb or max3421, 0 for main pico hub
+ // even though we've set PICO_DEFAULT_LED_PIN to our STATUS_PIN in main.h, the tinyusb library is prebuilt with it set to 25
+ // So we force that pin as input here. Messy, but works.
+  gpio_set_dir(25, false);
+  gpio_pull_up(25);
+// board_init will be setting the clock speed to 133mhz, apparently, so we need to do any speed set here
+// unfortunately it looks like 133 is just about the minimum required. So we'll leave it alone for now.  
+//  set_sys_clock_khz(100000, true); 
 
   while (true) {
     tuh_task(); // tinyusb host task
@@ -200,25 +207,8 @@ void core1_main() {
 
 int 
 __attribute__((noinline, long_call, section(".time_critical"))) 
-main() {
-// when RDMSEL is first pulled active, we copy the mouse state to our copyXXX statics, then send 1111 to the mouse port
-// (actually we don't send anything - we let all pins float)
-// (the keyboard will override that if any of the cursors or ctrl are held down, but we don't need to worry about that)
-// for subsequent reads before the timeout expires we send 1111, buttons, ydelta>>8, (ydelta>>4)&f, ydelta&f, xdelta>>8, (xdelta>>8)&f, xdelta&f, 1111
-// if there's longer than 30uS between two reads then we start again
-// (note the second 1111 at the start - contrary to cookie's doc, there's two initial 1111 reads)
-// perhaps that's how George's joystick works? maybe the first read is the keyboard read, and that can be anything, as long as the second
-// read is 1111?
-// if we had a second USB connector for a joypad, we could use the first read to write cursors, and the second read could still be 1111
-
-// we could also have multiple USB joysticks (up to 4) if we added a connector to optionally connect to Sam's joystick port - worth
-// doing? would people rather use "proper" joysticks?
-
-// it would actually makes more sense to output the next data values to the pins once RDMSel goes inactive, so that
-// once it goes active again the data is already waiting. that way we don't need to worry about response times
-
-  set_sys_clock_khz(PIO_CLK_HZ/1000, true);
-  stdio_init_all();
+main()
+{
 // Setup Debug to UART
 #ifdef DEBUG
   gpio_set_function(UART_TX_PIN, GPIO_FUNC_UART);
@@ -325,7 +315,6 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
   DEBUG_PRINT(("USB Device Removed\r\n"));
   mouseLive = false;
   gpio_put(STATUS_PIN, 0); // Turn status LED off
-  // don't bother changing the interrupt status - we'll just report no movement
 }
 
 static void processMouse(uint8_t dev_addr, hid_mouse_report_t const *report)
