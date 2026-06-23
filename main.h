@@ -50,6 +50,15 @@
 #undef PICO_DEFAULT_LED_PIN
 #define PICO_DEFAULT_LED_PIN STATUS_PIN
 
+// joystick pins
+#define JoystickUp_PIN 25
+#define JoystickDown_PIN 26
+#define JoystickLeft_PIN 27
+#define JoystickRight_PIN 28
+#define JoystickFire_PIN 29
+
+
+#define JoystickPinsMask ((1<<JoystickUp_PIN)|(1<<JoystickDown_PIN)|(1<<JoystickLeft_PIN)|(1<<JoystickRight_PIN)|(1<<JoystickFire_PIN))
 
 // Function prototypes
 void initialiseHardware(void);

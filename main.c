@@ -81,7 +81,7 @@ auto_init_recursive_mutex(samDeltaMutex);
 
 volatile int16_t samYDelta = 0;
 volatile int16_t samXDelta = 0;
-volatile uint8_t samButts = 0xf; // we start off with no buttons pressed (they're active-low)
+volatile uint8_t samButts = 0x1f; // we start off with no buttons pressed (they're active-low)
 volatile bool mouseLive = false;
 
 volatile uint8_t mousedev_addr;
@@ -89,12 +89,24 @@ volatile uint8_t mouseinstance;
 volatile uint64_t justmounted = 0; // usb callback sets justmounted to time_us_64() and also sets mouseinstance/dev_addr
 
 volatile bool ledstate = false;
+unsigned long
+getJSPins () {
+  unsigned long nextpins = gpio_get_all();
+  nextpins = 
+              (((nextpins >> JoystickFire_PIN)  & 1) << 0) |
+              (((nextpins >> JoystickUp_PIN)    & 1) << 1) |
+              (((nextpins >> JoystickDown_PIN)  & 1) << 2) |
+              (((nextpins >> JoystickLeft_PIN)  & 1) << 3) |
+              (((nextpins >> JoystickRight_PIN) & 1) << 4);
+  return nextpins;
+}
 
 static void 
 __attribute__((noinline, long_call, section(".time_critical"))) 
 pio_irq_handler(void) {
 //  static uint64_t tm = 0;
-  static int copyXDelta = 0, copyYDelta = 0;
+  static int copyXDelta = 0, copyYDelta = 0, copyButtState = 7;
+  unsigned char jspins;
 //  uint64_t newtm;
   if (pio_interrupt_get(sam_pio, 1)) {
 // when the PIO completes sending all 8 nibbles it sends irq1, so we clear our copy deltas
@@ -111,6 +123,7 @@ pio_irq_handler(void) {
     samYDelta = 0;
     samXDelta = 0;
     recursive_mutex_exit(&samDeltaMutex);
+    copyButtState = samButts;
     if (copyXDelta > 0x7ff) {
       copyXDelta = 0x7ff;
     } else if (copyXDelta < -0x7ff) {
@@ -121,23 +134,32 @@ pio_irq_handler(void) {
     } else if (copyYDelta < -0x7ff) {
       copyYDelta = -0x7ff;
     }
-  } else {
-// if the mouse isn't plugged in then just report 1111 for every value    
-    copyXDelta = copyYDelta = 0xfff;
   }
+  jspins = getJSPins();
+
 // we have to push the timeout value along with the data because there's no other way
 // of getting such a large value timeout into a PIO register.
 // We can do this 16 bits at a time (5 bits for data, 11 bits for timeout),
 // so two pairs in each 32-bit word
 
 #define MAKEFIFOWORD(x,y) (((x)|16)|(TIMEOUT_X<<5)|(((y)|16)<<16)|(TIMEOUT_X<<21))
+
+  if (((copyButtState & 7) == 7) && (copyYDelta == 0) && (copyXDelta == 0) && (jspins != 0x1f)) {
+    // if the mouse isn't being used but the joystick is, use the joystick value for every read. That way code that
+    // reads the same cursors port multiple times in very quick succession (hello Howard!) won't break,
+    // as long as you don't wiggle the mouse
+    pio_sm_put_blocking(sam_pio, sam_sm, MAKEFIFOWORD(jspins, jspins));
+    pio_sm_put_blocking(sam_pio, sam_sm, MAKEFIFOWORD(jspins, jspins));
+    pio_sm_put_blocking(sam_pio, sam_sm, MAKEFIFOWORD(jspins, jspins));
+    pio_sm_put_blocking(sam_pio, sam_sm, MAKEFIFOWORD(jspins, jspins));
+  } else {    
 // we're using GPIO_OVERRIDE_INVERT on the output pins so if we write 0 here it becomes 1 on the output
 // so no need to ^0x1f the values
-  pio_sm_put_blocking(sam_pio, sam_sm, MAKEFIFOWORD(0x1f, samButts));
-  pio_sm_put_blocking(sam_pio, sam_sm, MAKEFIFOWORD((copyYDelta&0xf00)>>8, (copyYDelta&0x0f0)>>4));
-  pio_sm_put_blocking(sam_pio, sam_sm, MAKEFIFOWORD(copyYDelta&0x00f, (copyXDelta&0xf00)>>8));
-  pio_sm_put_blocking(sam_pio, sam_sm, MAKEFIFOWORD((copyXDelta&0x0f0)>>4, copyXDelta&0x00f));
-
+    pio_sm_put_blocking(sam_pio, sam_sm, MAKEFIFOWORD(0x1f, samButts));
+    pio_sm_put_blocking(sam_pio, sam_sm, MAKEFIFOWORD(((copyYDelta&0xf00)>>8)|16, ((copyYDelta&0x0f0)>>4)|16));
+    pio_sm_put_blocking(sam_pio, sam_sm, MAKEFIFOWORD((copyYDelta&0x00f)|16, ((copyXDelta&0xf00)>>8)|16));
+    pio_sm_put_blocking(sam_pio, sam_sm, MAKEFIFOWORD(((copyXDelta&0x0f0)>>4)|16, (copyXDelta&0x00f)|16));
+  }
   if (pio_interrupt_get(sam_pio, 0)) {
     pio_interrupt_clear(sam_pio, 0);
   }
@@ -157,7 +179,6 @@ pio_irq_handler(void) {
   } while (0)
 #define CFG_TUSB_DEBUG 0
 #endif
-
 static void blink_status(uint8_t count)
 {
   uint8_t i = 0;
@@ -280,12 +301,15 @@ void initialiseHardware(void)
   DEBUG_PRINT(("Pins initalised\r\n"));
 
   // Set pin directions
-// these 4 start out as INputs because we need them to float when they're non-zero. 
-// We set the output value to 0, and use set_dir_masked to set any 0 pins to output
-  gpio_set_dir_masked(SamMousePinsMask | (1<<RDMSEL_PIN) | (1<<STATUS_PIN), SamMousePinsMask | (1<<STATUS_PIN)); // mouse and status pins are outbound, RDMSEL is inbound
+  gpio_set_dir_masked(SamMousePinsMask | JoystickPinsMask  | (1<<RDMSEL_PIN) | (1<<STATUS_PIN), SamMousePinsMask | JoystickPinsMask | (1<<STATUS_PIN)); // mouse and status pins are outbound, RDMSEL is inbound
   gpio_pull_up(RDMSEL_PIN); // the internal pullup is about 50-80kOhm, which won't be anywhere near enough to not require our 300ohm pullup resistor, but let's not fight it at least
+  gpio_pull_up(JoystickFire_PIN);     // we have our own pullups on the joystick pins, but again, don't fight it
+  gpio_pull_up(JoystickUp_PIN);       //
+  gpio_pull_up(JoystickDown_PIN);     //
+  gpio_pull_up(JoystickLeft_PIN);     //
+  gpio_pull_up(JoystickRight_PIN);    //
 
-  DEBUG_PRINT(("Pin directions set\r\n"));
+  DEBUG_PRINT("Pin directions set\r\n");
   gpio_put_masked(SamMousePinsMask, 0);
   gpio_put(STATUS_PIN, 0);
 
