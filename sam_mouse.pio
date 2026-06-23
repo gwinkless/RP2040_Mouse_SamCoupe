@@ -15,18 +15,18 @@
 wait_first:
     ; we start off with pins high
     set pins, 0b11111
-    wait 1 gpio 22 ;; RDMSEL is active
+    wait 1 gpio 2 ;; RDMSEL_PIN ;; RDMSEL is active
     set y, 7 ;; although we have 8 nibbles, "jmp y--" decreases _after_ the test, so we start with one less
 writepins:
     pull noblock
-    wait 0 gpio 22
+    wait 0 gpio 2 ;; RDMSEL_PIN
     out pins, 5       ; shift next nibble
 wait_next1:
     jmp pin, have_edge1     ;;; hang around until we see RDMSEL again
     jmp x--, wait_next1 [0] ;;; or until we timeout
 
     jmp timeout       ; not all nibbles sent within 40uS
-;    wait 1 gpio 22 ; for now, forget timeouts
+;    wait 1 gpio 2 ;; RDMSEL_PIN ; for now, forget timeouts
 have_edge1:
 ;; ok, we've seen RDMSEL again
     out x,11 ;;; so reset our timeout counter in x (by grabbing it from the fifo)
@@ -35,7 +35,7 @@ have_edge1:
     jmp y--, notfinished
     jmp allnibscomplete
 notfinished:
-    wait 0 gpio 22 ;; and wait for RDMSEL to go inactive
+    wait 0 gpio 2 ;; RDMSEL_PIN ;; and wait for RDMSEL to go inactive
 
     out pins, 5       ; shift next nibble
 wait_next2:
@@ -43,7 +43,7 @@ wait_next2:
     jmp x--, wait_next2 [1] ;;; or until we timeout
 
     jmp timeout       ; not all nibbles sent
-;    wait 1 gpio 22 ; for now, forget timeouts
+;    wait 1 gpio 2 ;; RDMSEL_PIN ; for now, forget timeouts
 have_edge2:
     out x, 11
     jmp y--, writepins ;;; do the next nibble
