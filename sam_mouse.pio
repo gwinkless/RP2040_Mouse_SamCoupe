@@ -1,13 +1,13 @@
 .program sam_mouse
 
-    set pindirs 0b11111
+;    set pindirs 0b11111
     pull block ; first word should be the timeout value on its own
 .wrap_target
 wait_first:
     ; we start off with the joystick value
     pull noblock
     out pins, 5 ;;; output the joystick value
-    out x, 11 ;; we don't need a timeout, but if this is 0 we're just going to keep looping (because there's no mouse data to read)
+    out x, 11 ;; if this is 0 we're just going to keep looping (because there's no mouse data to read), otherwise it gets passed as timeout to part2
     wait 1 gpio 2 ;; RDMSEL_PIN ;; RDMSEL is active
     ;; don't need to timeout here. we'll just sit until we're read.
     wait 0 gpio 2 ;; RDMSEL_PIN ;; it's gone inactive, so get the next value
@@ -18,47 +18,40 @@ domouse:
     set pins, 0b11111 ;; after the joystick pins, we write 11111 so the mouse code thinks it's ok to read
     wait 1 gpio 2 ;;; RDMSEL is active again
     set y, 3 ;; although we have 8 nibbles, "jmp y--" decreases _after_ the test, so we start with one less
+    jmp part2
 writepins:
     pull noblock
-    wait 0 gpio 2 ;; RDMSEL_PIN
     out pins, 5       ; shift next nibble
+    wait 0 gpio 2 ;; RDMSEL_PIN ;; and wait for it to go inactive
 wait_next1:
     jmp pin, have_edge1     ;;; hang around until we see RDMSEL again
     jmp x--, wait_next1 [0] ;;; or until we timeout
 
     jmp timeout       ; not all nibbles sent within 40uS
-;    wait 1 gpio 2 ;; RDMSEL_PIN ; for now, forget timeouts
 have_edge1:
 ;; ok, we've seen RDMSEL again
     out x,11 ;;; so reset our timeout counter in x (by grabbing it from the fifo)
-;; this test for y isn't really necessary if we have an even number - we could just 
-;; use y=4 and only test it after every pull, but i'm not sure if we need 9 or 8 values    
-    jmp y--, notfinished
-    jmp allnibscomplete
-notfinished:
-    wait 0 gpio 2 ;; RDMSEL_PIN ;; and wait for RDMSEL to go inactive
-
+part2:
     out pins, 5       ; shift next nibble
+    wait 0 gpio 2 ;; RDMSEL_PIN ;; wait for RDMSEL to go inactive
+
 wait_next2:
     jmp pin, have_edge2     ;;; hang around until we see RDMSEL again
-    jmp x--, wait_next2 [1] ;;; or until we timeout
+    jmp x--, wait_next2 [0] ;;; or until we timeout
 
     jmp timeout       ; not all nibbles sent
-;    wait 1 gpio 2 ;; RDMSEL_PIN ; for now, forget timeouts
 have_edge2:
     out x, 11
     jmp y--, writepins ;;; do the next nibble
 allnibscomplete:
     irq wait 1   ; let the CPU know we've read all 8 nibs, so to clear the data, and send the new state
     jmp wait_first
-
 timeout:
 ; remove the remaining words from the fifo, and start again
-    out x,5 ; skip this nibble
-    out x,11 ; get the timeout value ready for the next loop
-    pull noblock ;; could loop around y-- doing this
-    pull noblock ;; but this is faster and simpler
-    pull noblock ;; albeit one instruction more
+    pull noblock
+    pull noblock
+    pull noblock
+justjs:
     irq wait 0 ; let the CPU know we've given up on this data, so to not clear the deltas, but to send new data anyway
 ;    jmp wait_first
 .wrap
