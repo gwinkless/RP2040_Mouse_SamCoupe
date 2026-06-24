@@ -212,7 +212,8 @@ void core1_main() {
   gpio_pull_up(25);
 // board_init will be setting the clock speed to 133mhz, apparently, so we need to do any speed set here
 // unfortunately it looks like 133 is just about the minimum required. So we'll leave it alone for now.  
-//  set_sys_clock_khz(100000, true); 
+// does lower work with pio mode though?
+  set_sys_clock_khz(PIO_CLK_HZ/1000, true); 
 
   while (true) {
     tuh_task(); // tinyusb host task
