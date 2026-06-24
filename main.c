@@ -94,11 +94,16 @@ unsigned long
 getJSPins () {
   unsigned long nextpins = gpio_get_all();
   nextpins = 
+  
+#if (JoystickFire_PIN == (JoystickUp_PIN - 1))
+            (nextpins & (JoystickFire_PIN | JoystickUp_PIN | JoystickDown_PIN | JoystickLeft_PIN | JoystickRight_PIN)) >> JoystickFire_PIN;
+#else
               (((nextpins >> JoystickFire_PIN)  & 1) << 0) |
               (((nextpins >> JoystickUp_PIN)    & 1) << 1) |
               (((nextpins >> JoystickDown_PIN)  & 1) << 2) |
               (((nextpins >> JoystickLeft_PIN)  & 1) << 3) |
               (((nextpins >> JoystickRight_PIN) & 1) << 4);
+#endif
   return nextpins;
 }
 
