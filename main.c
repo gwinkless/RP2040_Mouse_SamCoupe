@@ -154,10 +154,7 @@ pio_irq_handler(void) {
     // if the mouse isn't being used but the joystick is, use the joystick value for every read. That way code that
     // reads the same cursors port multiple times in very quick succession (hello Howard!) won't break,
     // as long as you don't wiggle the mouse
-    pio_sm_put_blocking(sam_pio, sam_sm, MAKEFIFOWORD(jspins, jspins));
-    pio_sm_put_blocking(sam_pio, sam_sm, MAKEFIFOWORD(jspins, jspins));
-    pio_sm_put_blocking(sam_pio, sam_sm, MAKEFIFOWORD(jspins, jspins));
-    pio_sm_put_blocking(sam_pio, sam_sm, MAKEFIFOWORD(jspins, jspins));
+    pio_sm_put_blocking(sam_pio, sam_sm, jspins); // if we send 0 as the timeout, the pio code will request another irq as soon as it's complete
   } else {    
 // we're using GPIO_OVERRIDE_INVERT on the output pins so if we write 0 here it becomes 1 on the output
 // so no need to ^0x1f the values

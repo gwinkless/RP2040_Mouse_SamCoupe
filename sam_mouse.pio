@@ -13,10 +13,20 @@
     mov x,osr
 .wrap_target
 wait_first:
-    ; we start off with pins high
-    set pins, 0b11111
+    ; we start off with the joystick value
+    pull noblock
+    out pins, 5 ;;; output the joystick value
+    out x, 11 ;; we don't need a timeout, but if this is 0 we're just going to keep looping (because there's no mouse data to read)
     wait 1 gpio 2 ;; RDMSEL_PIN ;; RDMSEL is active
     set y, 7 ;; although we have 8 nibbles, "jmp y--" decreases _after_ the test, so we start with one less
+    ;; don't need to timeout here. we'll just sit until we're read.
+    wait 0 gpio 2 ;; RDMSEL_PIN ;; it's gone inactive, so get the next value
+    jmp x--, domouse ;; if x was 0, then we're just going to ask for more jspins data
+    jmp justjs
+
+domouse:
+    set pins, 0b11111 ;; after the joystick pins, we write 11111 so the mouse code thinks it's ok to read
+    wait 1 gpio 2 ;;; RDMSEL is active again
 writepins:
     pull noblock
     wait 0 gpio 2 ;; RDMSEL_PIN
