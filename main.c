@@ -156,9 +156,10 @@ pio_irq_handler(void) {
     // as long as you don't wiggle the mouse
     pio_sm_put_blocking(sam_pio, sam_sm, jspins); // if we send 0 as the timeout, the pio code will request another irq as soon as it's complete
   } else {    
-// we're using GPIO_OVERRIDE_INVERT on the output pins so if we write 0 here it becomes 1 on the output
-// so no need to ^0x1f the values
-    pio_sm_put_blocking(sam_pio, sam_sm, MAKEFIFOWORD(0x1f, samButts));
+// we need the sam to read jspins, 1f, buttons, y&f00, y&f0, y&f, x&f00, x&f0, x&f
+// since 1f is an amount we can do manually in the pio, we don't need to send it here
+
+    pio_sm_put_blocking(sam_pio, sam_sm, MAKEFIFOWORD(jspins, samButts));
     pio_sm_put_blocking(sam_pio, sam_sm, MAKEFIFOWORD(((copyYDelta&0xf00)>>8)|16, ((copyYDelta&0x0f0)>>4)|16));
     pio_sm_put_blocking(sam_pio, sam_sm, MAKEFIFOWORD((copyYDelta&0x00f)|16, ((copyXDelta&0xf00)>>8)|16));
     pio_sm_put_blocking(sam_pio, sam_sm, MAKEFIFOWORD(((copyXDelta&0x0f0)>>4)|16, (copyXDelta&0x00f)|16));

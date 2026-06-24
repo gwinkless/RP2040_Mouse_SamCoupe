@@ -1,16 +1,7 @@
 .program sam_mouse
 
-; State: wait for first rising edge, IRQ CPU, then for each subsequent rising edge:
-; - pull a word (blocking)
-; - out the first 5 bits to pins
-; - use next 11 bits as a timeout value
-; - out the next 5 bits to pins
-; - use last 11 bits as a timeout value
-; repeat 4 times, then start again
-; Between edges, run a timeout loop: if pin doesn’t go high before X expires, reset.
     set pindirs 0b11111
     pull block ; first word should be the timeout value on its own
-    mov x,osr
 .wrap_target
 wait_first:
     ; we start off with the joystick value
@@ -18,7 +9,6 @@ wait_first:
     out pins, 5 ;;; output the joystick value
     out x, 11 ;; we don't need a timeout, but if this is 0 we're just going to keep looping (because there's no mouse data to read)
     wait 1 gpio 2 ;; RDMSEL_PIN ;; RDMSEL is active
-    set y, 7 ;; although we have 8 nibbles, "jmp y--" decreases _after_ the test, so we start with one less
     ;; don't need to timeout here. we'll just sit until we're read.
     wait 0 gpio 2 ;; RDMSEL_PIN ;; it's gone inactive, so get the next value
     jmp x--, domouse ;; if x was 0, then we're just going to ask for more jspins data
@@ -27,6 +17,7 @@ wait_first:
 domouse:
     set pins, 0b11111 ;; after the joystick pins, we write 11111 so the mouse code thinks it's ok to read
     wait 1 gpio 2 ;;; RDMSEL is active again
+    set y, 3 ;; although we have 8 nibbles, "jmp y--" decreases _after_ the test, so we start with one less
 writepins:
     pull noblock
     wait 0 gpio 2 ;; RDMSEL_PIN
