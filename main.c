@@ -65,7 +65,8 @@
 #define SamMouseTimeout_us 40
 
 
-#define PIO_CLK_HZ 48000000u
+//#define PIO_CLK_HZ 48000000u
+#define PIO_CLK_HZ 100000000u
 #define TIMEOUT_X ((uint32_t)(((SamMouseTimeout_us * (PIO_CLK_HZ/1000000)) / 2)))
 // divide CLK_HZ by 1 million because SamMouseTimeout_us is in microseconds
 // divide result by 3 if we add an extra 1 tick delay into the jmp pin loop, so each cycle will take 3 ticks
