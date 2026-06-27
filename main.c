@@ -379,15 +379,22 @@ void initialiseHardware(void)
 //--------------------------------------------------------------------+
 // Host HID
 //--------------------------------------------------------------------+
+#define MAX_REPORT  4
+static struct {
+  uint8_t report_count;
+  tuh_hid_report_info_t report_info[MAX_REPORT];
+} hid_info[CFG_TUH_HID];
 
 // Invoked when device with hid interface is mounted
-void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_report, uint16_t desc_len)
-{
+void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_report, uint16_t desc_len) {
   (void)desc_report;
   (void)desc_len;
   DEBUG_PRINT(("USB Device Attached\r\n"));
   uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
   
+  if ( itf_protocol == HID_ITF_PROTOCOL_NONE ) {
+    hid_info[instance].report_count = tuh_hid_parse_report_descriptor(hid_info[instance].report_info, MAX_REPORT, desc_report, desc_len);
+  } else
   // Receive report from boot mouse only
   // tuh_hid_report_received_cb() will be invoked when report is available
   if (itf_protocol == HID_ITF_PROTOCOL_MOUSE) {
@@ -435,18 +442,80 @@ static void processMouse(hid_mouse_report_t const *report)
   }
   mutex_exit(&samDeltaMutex);
 }
+static void process_generic_report(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len)
+{
+  (void) dev_addr;
+  (void) len;
+
+  uint8_t const rpt_count = hid_info[instance].report_count;
+  tuh_hid_report_info_t* rpt_info_arr = hid_info[instance].report_info;
+  tuh_hid_report_info_t* rpt_info = NULL;
+
+  if ( rpt_count == 1 && rpt_info_arr[0].report_id == 0) {
+    // Simple report without report ID as 1st byte
+    rpt_info = &rpt_info_arr[0];
+  } else {
+    // Composite report, 1st byte is report ID, data starts from 2nd byte
+    uint8_t const rpt_id = report[0];
+
+    // Find report id in the array
+    for(uint8_t i=0; i<rpt_count; i++) {
+      if (rpt_id == rpt_info_arr[i].report_id ) {
+        rpt_info = &rpt_info_arr[i];
+        break;
+      }
+    }
+
+    report++;
+    len--;
+  }
+
+  if (!rpt_info) {
+    printf("Couldn't find report info !\r\n");
+    return;
+  }
+
+  // For complete list of Usage Page & Usage checkout src/class/hid/hid.h. For examples:
+  // - Keyboard                     : Desktop, Keyboard
+  // - Mouse                        : Desktop, Mouse
+  // - Gamepad                      : Desktop, Gamepad
+  // - Consumer Control (Media Key) : Consumer, Consumer Control
+  // - System Control (Power key)   : Desktop, System Control
+  // - Generic (vendor)             : 0xFFxx, xx
+  if ( rpt_info->usage_page == HID_USAGE_PAGE_DESKTOP ) {
+    switch (rpt_info->usage) {
+/*
+      case HID_USAGE_DESKTOP_KEYBOARD:
+        TU_LOG1("HID receive keyboard report\r\n");
+        // Assume keyboard follow boot report layout
+        process_kbd_report( (hid_keyboard_report_t const*) report );
+        break;
+*/
+      case HID_USAGE_DESKTOP_MOUSE:
+        TU_LOG1("HID receive mouse report\r\n");
+        // Assume mouse follow boot report layout
+        processMouse((hid_mouse_report_t const*) report );
+        break;
+
+      default:
+        break;
+    }
+  }
+}
 
 void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *report, uint16_t len)
 {
-  (void)len;
   uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
   switch (itf_protocol)
   {
   case HID_ITF_PROTOCOL_MOUSE:
     processMouse((hid_mouse_report_t const *)report);
     break;
-
+  case HID_ITF_PROTOCOL_KEYBOARD:
+    // do nothing
+    break;
   default:
+    process_generic_report(dev_addr, instance, report, len);
     break;
   }
 
