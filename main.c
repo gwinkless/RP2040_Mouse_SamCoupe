@@ -62,7 +62,6 @@ volatile int16_t samWheelDelta = 0;
 volatile uint8_t samButts = 0xf; // we start off with no buttons pressed (they're active-low)
 volatile bool mouseLive = false;
 
-volatile uint8_t mousedev_addr;
 volatile uint8_t mouseinstance;
 volatile bool justmounted = false; // usb callback sets justmounted and mouseinstance/dev_addr
 
@@ -281,32 +280,6 @@ void core1_main()
   while (true)
   {
     tuh_task(); // tinyusb host task
-    if (justmounted) {
-// apparently (according to some tinyusb forum post) we shouldn't be setting these values from the callback, because
-// the interface is still enumerating at the point of the callback. So we set justmounted in the callback and do this here instead.
-  // Interface protocol (hid_interface_protocol_enum_t)
-      uint8_t const itf_protocol = tuh_hid_interface_protocol(mousedev_addr, mouseinstance);
-      justmounted = false;
-      DEBUG_PRINT(("Protocol: %d\r\n", itf_protocol));
-
-      // Receive report from boot mouse only
-      // tuh_hid_report_received_cb() will be invoked when report is available
-      if (itf_protocol == HID_ITF_PROTOCOL_MOUSE)
-      {
-        // Set protocol to full report mode for mouse wheel support
-        tuh_hid_set_protocol(mousedev_addr, mouseinstance, HID_PROTOCOL_REPORT);
-        if (tuh_hid_receive_report(mousedev_addr, mouseinstance))
-        {
-          blink_status(3);
-        }
-        gpio_put(STATUS_PIN, 1); // Turn status LED on
-        mouseLive = true;
-      } else {
-        blink_status(10+itf_protocol);
-        // we need to debug this further. There's a suggestion that you have to unmount the composite device and it will remount. Dunno.
-        // Best way will be to use USB_DEBUG on linux and see how that behaves.
-      }
-    }
   }
 }
 
@@ -413,9 +386,20 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_re
   (void)desc_report;
   (void)desc_len;
   DEBUG_PRINT(("USB Device Attached\r\n"));
-  mousedev_addr = dev_addr;
+  uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
+  
+  // Receive report from boot mouse only
+  // tuh_hid_report_received_cb() will be invoked when report is available
+  if (itf_protocol == HID_ITF_PROTOCOL_MOUSE) {
+    // Set protocol to full report mode for mouse wheel support
+    tuh_hid_set_protocol(dev_addr, instance, HID_PROTOCOL_REPORT);
+    mouseLive = true;
     mouseinstance = instance;
-  justmounted = true;
+  }
+  if (tuh_hid_receive_report(dev_addr, instance)) {
+    blink_status(3);
+  }
+  if (mouseLive) gpio_put(STATUS_PIN, 1); // Turn status LED on
 }
 
 // Invoked when device with hid interface is un-mounted
@@ -424,7 +408,7 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
   (void)dev_addr;
   (void)instance;
   DEBUG_PRINT(("USB Device Removed\r\n"));
-  mouseLive = false;
+  if (instance == mouseinstance) mouseLive = false;
   gpio_put(STATUS_PIN, 0); // Turn status LED off
 }
 
