@@ -58,6 +58,7 @@
 
 volatile int16_t samYDelta = 0;
 volatile int16_t samXDelta = 0;
+volatile int16_t samWheelDelta = 0;
 volatile uint8_t samButts = 0xf; // we start off with no buttons pressed (they're active-low)
 volatile bool mouseLive = false;
 
@@ -104,6 +105,7 @@ SamRDMTightLoop () {
   static bool ledstate=0;
 	static int copyXDelta, copyYDelta;
   static unsigned char copyButtState;
+  static int copyWheel;
   unsigned char jspins;
   int nextpins = 0;
   while (1) {
@@ -160,6 +162,8 @@ SamRDMTightLoop () {
           samYDelta = 0;
           copyXDelta += samXDelta;
           samXDelta = 0;
+          copyWheel += samWheelDelta;
+          samWheelDelta = 0;
           mutex_exit(&samDeltaMutex);
           if (copyXDelta > 0x7ff) {
             copyXDelta = 0x7ff;
@@ -171,10 +175,14 @@ SamRDMTightLoop () {
           } else if (copyYDelta < -0x7ff) {
             copyYDelta = -0x7ff;
           }
-
+          if (copyWheel > 127) {
+            copyWheel = 127;
+          } else if (copyWheel < -128) {
+            copyWheel = -128;
+          }
           copyButtState = samButts;
           jspins = getJSPins();
-          if (((copyButtState & 7) == 7) && (copyYDelta == 0) && (copyXDelta == 0) && (jspins != 0x1f)) {
+          if (((copyButtState & 7) == 7) && (copyYDelta == 0) && (copyXDelta == 0) && (copyWheel == 0) && (jspins != 0x1f)) {
             // if the mouse isn't being used but the joystick is, use the joystick for every read. That way code that
             // reads the same cursors port multiple times in very quick succession (hello Howard!) won't break,
             // as long as you don't wiggle the mouse
@@ -191,30 +199,31 @@ SamRDMTightLoop () {
 
           break;
         case 1:
-          nextpins = 0x10 | copyButtState;
+          nextpins = ((copyWheel&64)>>2) | copyButtState;
           break;
         case 2:
-          nextpins = 0x10 | ((copyYDelta >> 8) & 0xf);
+          nextpins = ((copyWheel&32)>>1) | ((copyYDelta >> 8) & 0xf);
           break;
         case 3:
-          nextpins = 0x10 | ((copyYDelta >> 4) & 0xf);
+          nextpins = ((copyWheel&16)) | ((copyYDelta >> 4) & 0xf);
           break;
         case 4:
-          nextpins = 0x10 | ((copyYDelta) & 0xf);
+          nextpins = ((copyWheel&8)<<1) | ((copyYDelta) & 0xf);
           break;
         case 5:
-          nextpins = 0x10 | ((copyXDelta >> 8) & 0xf);
+          nextpins = ((copyWheel&4)<<2) | ((copyXDelta >> 8) & 0xf);
           break;
         case 6:
-          nextpins = 0x10 | ((copyXDelta >> 4) & 0xf);
+          nextpins = ((copyWheel&2)<<3) | ((copyXDelta >> 4) & 0xf);
           break;
         case 7:
-          nextpins = 0x10 | ((copyXDelta) & 0xf);
+          nextpins = ((copyWheel&1)<<4) | ((copyXDelta) & 0xf);
           break;
         case 8:
           nextpins = getJSPins();
           copyYDelta = 0;
           copyXDelta = 0;
+          copyWheel = 0;
           break;
       }
       rdmstate = (rdmstate + 1) % 9;
@@ -405,7 +414,7 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_re
   (void)desc_len;
   DEBUG_PRINT(("USB Device Attached\r\n"));
   mousedev_addr = dev_addr;
-  mouseinstance = instance;
+    mouseinstance = instance;
   justmounted = true;
 }
 
@@ -421,26 +430,9 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
 
 static void processMouse(uint8_t dev_addr, hid_mouse_report_t const *report)
 {
-  int16_t tmpsamXDelta, tmpsamYDelta;
+  int16_t tmpsamXDelta, tmpsamYDelta, tmpsamWheelDelta;
   // Blink status LED
   // gpio_put(STATUS_PIN, 0);
-  (void)dev_addr;
-  // sam driver doesn't have any concept of scroll wheel. we could add it, but software support isn't there
-/*  // Handle scroll wheel
-  if (report->wheel)
-  {
-    gpio_init(MB_PIN);
-    gpio_set_dir(MB_PIN, GPIO_OUT);
-    gpio_put(MB_PIN, 0);
-    processMouseMovement(report->wheel, MOUSEY);
-    sleep_ms(100);
-    DEBUG_PRINT(("Wheel movement %d\r\n", report->wheel));
-  }
-  else
-  {
-    gpio_deinit(MB_PIN);
-  }
-*/
   // Handle mouse buttons
   samButts = ((report->buttons & 1) | ((report->buttons << 1) & 4) | ((report->buttons >> 1) & 2)) ^ 0xf;
 // usb mouse buttons are active-high, we want active-low. 
@@ -453,6 +445,10 @@ static void processMouse(uint8_t dev_addr, hid_mouse_report_t const *report)
   // we only report back 12-bit values, so restrict the allowable range
   samXDelta = (tmpsamXDelta > 0x7ff) ? 0x7ff : ((tmpsamXDelta < -0x7ff) ? -0x7ff : (int16_t)tmpsamXDelta);
   samYDelta = (tmpsamYDelta > 0x7ff) ? 0x7ff : ((tmpsamYDelta < -0x7ff) ? -0x7ff : (int16_t)tmpsamYDelta);
+  if (report->wheel) {
+    tmpsamWheelDelta = samWheelDelta + report->wheel;
+    samWheelDelta = (tmpsamWheelDelta > 127) ? 127 : ((tmpsamWheelDelta < -128) ? -128 : tmpsamWheelDelta);
+  }
   mutex_exit(&samDeltaMutex);
 }
 
