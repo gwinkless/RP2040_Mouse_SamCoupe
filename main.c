@@ -412,7 +412,7 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
   gpio_put(STATUS_PIN, 0); // Turn status LED off
 }
 
-static void processMouse(uint8_t dev_addr, hid_mouse_report_t const *report)
+static void processMouse(hid_mouse_report_t const *report)
 {
   int16_t tmpsamXDelta, tmpsamYDelta, tmpsamWheelDelta;
   // Blink status LED
@@ -443,7 +443,7 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
   switch (itf_protocol)
   {
   case HID_ITF_PROTOCOL_MOUSE:
-    processMouse(dev_addr, (hid_mouse_report_t const *)report);
+    processMouse((hid_mouse_report_t const *)report);
     break;
 
   default:
