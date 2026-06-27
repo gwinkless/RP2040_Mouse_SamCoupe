@@ -80,11 +80,16 @@ unsigned long
 getJSPins () {
   unsigned long nextpins = gpio_get_all();
   nextpins = 
+
+#if ((JoystickPinsMask >> JoystickFire_PIN) == 31) 
+            (nextpins & JoystickPinsMask) >> JoystickFire_PIN;
+#else
               (((nextpins >> JoystickFire_PIN)  & 1) << 0) |
               (((nextpins >> JoystickUp_PIN)    & 1) << 1) |
               (((nextpins >> JoystickDown_PIN)  & 1) << 2) |
               (((nextpins >> JoystickLeft_PIN)  & 1) << 3) |
               (((nextpins >> JoystickRight_PIN) & 1) << 4);
+#endif
   return nextpins;
 }
 
@@ -126,11 +131,18 @@ SamRDMTightLoop () {
         //if (rdmstate > 1) gpio_put(STATUS_PIN, ledstate ^= 1); // for debugging flip the LED every time we timeout, unless we only read a single value
         rdmstate = 0;
         nextpins = getJSPins();
-        gpio_put_masked(SamMousePinsMask, ((nextpins&1)<<SamMouseBit0_PIN)
+        gpio_put_masked(SamMousePinsMask, 
+#if ((SamMousePinsMask >> SamMouseBit0_PIN) == 31)
+// we're on the final board
+          ((nextpins&31)<<SamMouseBit0_PIN)
+#else
+          ((nextpins&1)<<SamMouseBit0_PIN)
                                         | ((nextpins&2)<<(SamMouseBit1_PIN-1))
                                         | ((nextpins&4)<<(SamMouseBit2_PIN-2))
                                         | ((nextpins&8)<<(SamMouseBit3_PIN-3))
-                                        | ((nextpins&16)<<(SamMouseBit4_PIN-4)));
+        | ((nextpins&16)<<(SamMouseBit4_PIN-4))
+#endif
+        );
       }
     }
     // reset the inter-request timeout
@@ -212,16 +224,18 @@ SamRDMTightLoop () {
     }
     while (gpio_get(RDMSEL_PIN));
     // rdmsel has gone inactive again, so we move to the next state and output the values for that state
-    gpio_put_masked(SamMousePinsMask, ((nextpins&1)<<SamMouseBit0_PIN)
+    gpio_put_masked(SamMousePinsMask, 
+#if ((SamMousePinsMask >> SamMouseBit0_PIN) == 31)
+// we're on the final board
+          ((nextpins&31)<<SamMouseBit0_PIN)
+#else
+          ((nextpins&1)<<SamMouseBit0_PIN)
                                     | ((nextpins&2)<<(SamMouseBit1_PIN-1))
                                     | ((nextpins&4)<<(SamMouseBit2_PIN-2))
                                     | ((nextpins&8)<<(SamMouseBit3_PIN-3))
-                                    | ((nextpins&16)<<(SamMouseBit4_PIN-4)));
-//    gpio_put(SamMouseBit0_PIN, (nextpins & 1));
-//    gpio_put(SamMouseBit1_PIN, (nextpins & 2));
-//    gpio_put(SamMouseBit2_PIN, (nextpins & 4));
-//    gpio_put(SamMouseBit3_PIN, (nextpins & 8));
-//    gpio_put(SamMouseBit4_PIN, (nextpins & 16));
+        | ((nextpins&16)<<(SamMouseBit4_PIN-4))
+#endif
+      );
   }
 }
 
