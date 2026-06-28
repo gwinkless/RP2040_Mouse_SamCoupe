@@ -101,7 +101,6 @@ __attribute__((noinline, long_call, section(".time_critical")))
 SamRDMTightLoop () {
   static uint32_t LastRDMSelTimeout = 0;
 	static int rdmstate = 0;
-  static bool ledstate=0;
 	static int copyXDelta, copyYDelta;
   static unsigned char copyButtState;
   static int copyWheel;
@@ -301,7 +300,7 @@ main()
   DEBUG_PRINT(("*         RP2040 USB To Sam Coupé adaptor          *\r\n"));
   DEBUG_PRINT(("*         Copyright 2022 Darren Jones              *\r\n"));
   DEBUG_PRINT(("*         (nz.darren.jones@gmail.com)              *\r\n"));
-  DEBUG_PRINT(("*         Copyright 2025 Geoff Winkless            *\r\n"));
+  DEBUG_PRINT(("*         Copyright 2026 Geoff Winkless            *\r\n"));
   DEBUG_PRINT(("*         (sam@ukku.uk)                            *\r\n"));
   DEBUG_PRINT(("*         Version: %s                             *\r\n", VERSION));
   DEBUG_PRINT(("*         Build Date: %s %s         *\r\n", __DATE__, __TIME__));
@@ -321,26 +320,32 @@ main()
 
   // Blink Status LED and wait for everything to settle
 //  blink_status(10);
-  // can't believe this (5 seconds) needs to be so long. Also, we don't really care if we run before everything's ready
-  // now we (core0) go and sit in a tight loop waiting for RDMSel to change
+// can't believe this (5 seconds) needs to be so long.
+// Also, we don't really care if we run before everything's ready, so I'm just going to take it out
+
 // there's a race here where if the mouse is already plugged in (or plugged in during our startup wait) we
 // end up overriding the status-1 that the usb handler sets with our blink_status. So we just do it here too.
 //  if (mouseLive) gpio_put(STATUS_PIN, 1); 
+// now we (core0) go and sit in a tight loop waiting for RDMSel to change
   SamRDMTightLoop();
 }
 
 void initialiseHardware(void)
 {
   // Document pins for picotool
-  bi_decl(bi_1pin_with_name(SamMouseBit0_PIN, "Sam Mouse Bit0 Output"));
-  bi_decl(bi_1pin_with_name(SamMouseBit1_PIN, "Sam Mouse Bit1 Output"));
-  bi_decl(bi_1pin_with_name(SamMouseBit2_PIN, "Sam Mouse Bit2 Output"));
-  bi_decl(bi_1pin_with_name(SamMouseBit3_PIN, "Sam Mouse Bit3 Output"));
-  bi_decl(bi_1pin_with_name(SamMouseBit4_PIN, "Sam Mouse Bit4 Output"));
-  bi_decl(bi_1pin_with_name(RDMSEL_PIN, "Sam Mouse RDMSEL input"));
-  bi_decl(bi_1pin_with_name(UART_RX_PIN, "UART RX"));
-  bi_decl(bi_1pin_with_name(UART_TX_PIN, "UART TX"));
-  bi_decl(bi_1pin_with_name(STATUS_PIN, "Status LED"));
+  bi_decl(bi_1pin_with_name(SamMouseBit0_PIN,  "Sam Mouse Bit0 Output"));
+  bi_decl(bi_1pin_with_name(SamMouseBit1_PIN,  "Sam Mouse Bit1 Output"));
+  bi_decl(bi_1pin_with_name(SamMouseBit2_PIN,  "Sam Mouse Bit2 Output"));
+  bi_decl(bi_1pin_with_name(SamMouseBit3_PIN,  "Sam Mouse Bit3 Output"));
+  bi_decl(bi_1pin_with_name(SamMouseBit4_PIN,  "Sam Mouse Bit4 Output"));
+  bi_decl(bi_1pin_with_name(JoystickFire_PIN,  "DB9 Joystick Fire Input"));
+  bi_decl(bi_1pin_with_name(JoystickUp_PIN,    "DB9 Joystick Up Input"));
+  bi_decl(bi_1pin_with_name(JoystickDown_PIN,  "DB9 Joystick Down Input"));
+  bi_decl(bi_1pin_with_name(JoystickLeft_PIN,  "DB9 Joystick Left Input"));
+  bi_decl(bi_1pin_with_name(JoystickRight_PIN, "DB9 Joystick Right Input"));
+  bi_decl(bi_1pin_with_name(UART_RX_PIN,       "UART RX"));
+  bi_decl(bi_1pin_with_name(UART_TX_PIN,       "UART TX"));
+  bi_decl(bi_1pin_with_name(STATUS_PIN,        "Status LED"));
 
   // Initalize the pins
   gpio_init(SamMouseBit0_PIN);
@@ -350,20 +355,20 @@ void initialiseHardware(void)
   gpio_init(SamMouseBit4_PIN);
   gpio_init(RDMSEL_PIN);
   gpio_init(STATUS_PIN);
+  gpio_init(JoystickFire_PIN);
   gpio_init(JoystickUp_PIN);
   gpio_init(JoystickDown_PIN);
   gpio_init(JoystickLeft_PIN);
   gpio_init(JoystickRight_PIN);
-  gpio_init(JoystickFire_PIN);
   DEBUG_PRINT(("Pins initialised\r\n"));
 
   // Set pin directions
   gpio_set_dir_masked(JoystickPinsMask | SamMousePinsMask | (1<<RDMSEL_PIN) | (1<<STATUS_PIN), SamMousePinsMask | (1<<STATUS_PIN)); // mouse and status pins are outbound, RDMSEL and joystick are inbound
   gpio_pull_up(RDMSEL_PIN); // the internal pullup is about 50-80kOhm, which won't be anywhere near enough to not require our 3kOhm pullup resistor, but let's not fight it at least
-  gpio_pull_up(JoystickFire_PIN);     // are we going to need external pullups on these too?
-  gpio_pull_up(JoystickUp_PIN);       //
-  gpio_pull_up(JoystickDown_PIN);     //
-  gpio_pull_up(JoystickLeft_PIN);     //
+  gpio_pull_up(JoystickFire_PIN);     // again, we have external pullups on these
+  gpio_pull_up(JoystickUp_PIN);       // Not sure they're required - the prototype
+  gpio_pull_up(JoystickDown_PIN);     // board didn't have them - but it's
+  gpio_pull_up(JoystickLeft_PIN);     // cleaner to have them
   gpio_pull_up(JoystickRight_PIN);    //
   gpio_set_outover(SamMouseBit0_PIN, GPIO_OVERRIDE_INVERT);
   gpio_set_outover(SamMouseBit1_PIN, GPIO_OVERRIDE_INVERT);
@@ -520,8 +525,8 @@ void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t cons
   }
 
   // continue to request to receive report
-  if (!tuh_hid_receive_report(dev_addr, instance))
-  {
+  if (!tuh_hid_receive_report(dev_addr, instance)) {
+    // do we need to do something about this error?
     return;
   }
 }
