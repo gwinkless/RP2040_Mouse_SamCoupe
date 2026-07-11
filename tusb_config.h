@@ -67,10 +67,9 @@
 
 #define CFG_TUH_HUB                 1
 #define CFG_TUH_CDC                 0
-#define CFG_TUH_HID                 1
+#define CFG_TUH_HID                 8 // GW changed from 1 to get compound descriptors
 #define CFG_TUH_MSC                 0
 #define CFG_TUH_VENDOR              0
-// GW increased to try to handle compound devices
 #define CFG_TUH_DEVICE_MAX          (CFG_TUH_HUB ? 16 : 4)
 
 #ifdef __cplusplus
