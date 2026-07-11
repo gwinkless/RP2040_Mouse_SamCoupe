@@ -41,9 +41,7 @@
 #define VERSION "1.0"
 
 #include "main.h"
-//#include "pio_usb.h"
-#include "bsp/rp2040/board.h"
-#include "bsp/board_api.h"
+#include "bsp/board.h"
 #include "tusb.h"
 
 #include "hardware/uart.h"
@@ -267,8 +265,11 @@ void core1_main()
 {
   sleep_ms(10);
   board_init();
-
-  tuh_init(0); // 1 for pio-usb or max3421, 0 for main pico hub
+  const tusb_rhport_init_t rh_init = {
+      .role = TUSB_ROLE_HOST,
+      .speed = TUSB_SPEED_FULL,
+  };
+  tusb_init(0, &rh_init); // rhport 0 is main rp2040 hub
  // even though we've set PICO_DEFAULT_LED_PIN to our STATUS_PIN in main.h, the tinyusb library is prebuilt with it set to 25
  // So we force that pin as input here. Messy, but works.
  #if (STATUS_PIN != 25)
