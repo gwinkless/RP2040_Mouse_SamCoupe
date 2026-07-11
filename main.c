@@ -50,9 +50,10 @@
 #define DATA_BITS 8
 #define STOP_BITS 1
 #define PARITY UART_PARITY_NONE
-/*#define UART_TX_PIN 12
-#define UART_RX_PIN 13 */
-
+#ifdef DEBUG
+#define UART_TX_PIN 15
+#define UART_RX_PIN 16 
+#endif
 
 volatile int16_t samYDelta = 0;
 volatile int16_t samXDelta = 0;
@@ -136,9 +137,9 @@ SamRDMTightLoop () {
           ((nextpins&31)<<SamMouseBit0_PIN)
 #else
           ((nextpins&1)<<SamMouseBit0_PIN)
-                                        | ((nextpins&2)<<(SamMouseBit1_PIN-1))
-                                        | ((nextpins&4)<<(SamMouseBit2_PIN-2))
-                                        | ((nextpins&8)<<(SamMouseBit3_PIN-3))
+        | ((nextpins&2)<<(SamMouseBit1_PIN-1))
+        | ((nextpins&4)<<(SamMouseBit2_PIN-2))
+        | ((nextpins&8)<<(SamMouseBit3_PIN-3))
         | ((nextpins&16)<<(SamMouseBit4_PIN-4))
 #endif
         );
@@ -236,9 +237,9 @@ SamRDMTightLoop () {
           ((nextpins&31)<<SamMouseBit0_PIN)
 #else
           ((nextpins&1)<<SamMouseBit0_PIN)
-                                    | ((nextpins&2)<<(SamMouseBit1_PIN-1))
-                                    | ((nextpins&4)<<(SamMouseBit2_PIN-2))
-                                    | ((nextpins&8)<<(SamMouseBit3_PIN-3))
+        | ((nextpins&2)<<(SamMouseBit1_PIN-1))
+        | ((nextpins&4)<<(SamMouseBit2_PIN-2))
+        | ((nextpins&8)<<(SamMouseBit3_PIN-3))
         | ((nextpins&16)<<(SamMouseBit4_PIN-4))
 #endif
       );
@@ -311,8 +312,10 @@ main()
   DEBUG_PRINT(("****************************************************\r\n"));
   DEBUG_PRINT(("\r\n"));
   DEBUG_PRINT(("RP2040 USB To Sam Booting.....\r\n"));
-
-  // all USB task run in core1
+#if SAMMOUSE_PICOBOARD
+// for now, we're going to run core1_main in core 0, so we can debug the USB code
+  core1_main();
+#endif
   multicore_reset_core1();
   DEBUG_PRINT(("Core1 Reset\r\n"));
 
@@ -327,7 +330,7 @@ main()
 // can't believe this (5 seconds) needs to be so long.
 // Also, we don't really care if we run before everything's ready, so I'm just going to take it out
 
-// there's a race here where if the mouse is already plugged in (or plugged in during our startup wait) we
+  // there's a race here where if the mouse is already plugged in (or plugged in during our startup wait) we
 // end up overriding the status-1 that the usb handler sets with our blink_status. So we just do it here too.
 //  if (mouseLive) gpio_put(STATUS_PIN, 1); 
 // now we (core0) go and sit in a tight loop waiting for RDMSel to change
@@ -347,8 +350,10 @@ void initialiseHardware(void)
   bi_decl(bi_1pin_with_name(JoystickDown_PIN,  "DB9 Joystick Down Input"));
   bi_decl(bi_1pin_with_name(JoystickLeft_PIN,  "DB9 Joystick Left Input"));
   bi_decl(bi_1pin_with_name(JoystickRight_PIN, "DB9 Joystick Right Input"));
+  #ifdef DEBUG
   bi_decl(bi_1pin_with_name(UART_RX_PIN,       "UART RX"));
   bi_decl(bi_1pin_with_name(UART_TX_PIN,       "UART TX"));
+  #endif
   bi_decl(bi_1pin_with_name(STATUS_PIN,        "Status LED"));
 
   // Initalize the pins
@@ -388,24 +393,150 @@ void initialiseHardware(void)
 //--------------------------------------------------------------------+
 // Host HID
 //--------------------------------------------------------------------+
-#define MAX_REPORT  4
-static struct {
-  uint8_t report_count;
-  tuh_hid_report_info_t report_info[MAX_REPORT];
-} hid_info[CFG_TUH_HID];
+#define MAX_REPORT  8
 
+
+struct onefield {
+  int instance;
+  int report_id;
+  int bit_offset;
+  int bit_size;
+};
+struct {
+    struct onefield x;
+    struct onefield y;
+    struct onefield buttons;
+    struct onefield wheel;
+} matchedfields = {0};
+void parse_hid_report_descriptor(int instance,
+                                 uint8_t const* desc,
+                                 uint16_t len)
+{
+    uint16_t bit_offset = 0;
+    uint16_t usage_list[32] = {0};
+    uint8_t usage_count = 0;
+    uint16_t usage_page = 0;
+    uint16_t usage_max = 0;
+    uint16_t usage_min = 0;
+    uint8_t report_size = 0;
+    uint8_t report_count = 0;
+    int16_t report_id = -1;
+    int first_button_bit_offset = -1;
+    uint16_t local_usage = 0;
+    for (uint16_t i = 0; i < len; ) {
+        uint8_t b = desc[i++];
+        uint8_t size = b & 0x03;
+        uint8_t type = (b >> 2) & 0x03;
+        uint8_t tag  = (b >> 4) & 0x0F;
+
+        uint32_t val = 0;
+        for (int s = 0; s < size; s++) {
+            val |= desc[i++] << (8 * s);
+        }
+
+        switch (type) {
+            case 0: // Main
+                if (tag == 8) { // INPUT
+                    for (int c = 0; c < report_count; c++) {
+                        struct onefield *item = NULL;
+                        if (usage_page == HID_USAGE_PAGE_DESKTOP) {
+                            switch (usage_list[c]) {
+                            case HID_USAGE_DESKTOP_X:
+                                item = &matchedfields.x;
+                                break;
+                            case HID_USAGE_DESKTOP_Y:
+                                item = &matchedfields.y;
+                                break;
+                            case HID_USAGE_DESKTOP_WHEEL:
+                                item = &matchedfields.wheel;
+                                break;
+                            }
+                        } else if (usage_page == HID_USAGE_PAGE_BUTTON) {
+                          if (usage_list[c] == 1) {
+                              // First button block
+                              matchedfields.buttons.report_id = report_id;
+                              matchedfields.buttons.bit_offset = bit_offset + ((report_id == -1) ? 0 : 8);
+                              matchedfields.buttons.bit_size = report_count;
+                              matchedfields.buttons.instance = instance;
+                              first_button_bit_offset = bit_offset;
+                          } else if (first_button_bit_offset != -1) {
+                              // Additional button block — merge if contiguous
+                              uint16_t expected_offset =
+                                  first_button_bit_offset +
+                                  matchedfields.buttons.bit_size;
+
+                              if (bit_offset == expected_offset) {
+                                  matchedfields.buttons.bit_size += report_count;
+                              }
+                              // else: non‑contiguous button block (rare) — ignore or handle separately
+                          }                          
+                        }
+                        if (item) {
+                          item->report_id = report_id;
+                          item->bit_offset = bit_offset + ((report_id == -1) ? 0 : 8);
+                          item->bit_size = report_size;
+                          item->instance = instance;
+                        }
+
+                        bit_offset += report_size;
+                    }
+
+                }
+                usage_count = 0; // we reset local usages after every Main item
+                memset(usage_list, '\0', sizeof(usage_list));
+                break;
+        case 1: // Global
+            switch (tag) {
+            case 0: usage_page = val; break;
+//            case 1: logical_min = (int32_t)val; break;
+//            case 2: logical_max = (int32_t)val; break;
+            case 7: report_size = val; break;
+            case 9: report_count = val; break;
+            case 8: report_id = val; break;
+            default:
+            }
+            break;
+        case 2: // Local
+            switch (tag) {
+            case 0: // USAGE
+                usage_list[usage_count++] = val;
+                break;
+
+            case 1: // USAGE_MIN
+                usage_min = val;
+                break;
+
+            case 2: // USAGE_MAX
+                usage_max = val;
+                // Expand range
+                if ((usage_page == HID_USAGE_PAGE_BUTTON) && usage_max - usage_min + 1 > 32) {
+                    // Just treat as a generic buttons bitfield, don’t expand
+                    usage_count = 0;  // or leave list empty
+                } else {
+                    for (uint16_t u = usage_min; u <= usage_max && usage_count < 32; u++)
+                        usage_list[usage_count++] = u;
+                }                
+                break;
+            }
+            break;
+        }
+    }
+}
+
+void tuh_hid_report_descriptor_cb(uint8_t dev_addr, uint8_t instance,
+                                  uint8_t const* desc_report, uint16_t desc_len) {
+  parse_hid_report_descriptor(instance, desc_report, desc_len);
+  if (tuh_hid_receive_report(dev_addr, instance)) {
+    blink_status(3);
+  }
+}
 // Invoked when device with hid interface is mounted
 void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_report, uint16_t desc_len) {
   (void)desc_report;
   (void)desc_len;
   DEBUG_PRINT(("USB Device Attached\r\n"));
   uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
-  
-  if ( itf_protocol == HID_ITF_PROTOCOL_NONE ) {
-    hid_info[instance].report_count = tuh_hid_parse_report_descriptor(hid_info[instance].report_info, MAX_REPORT, desc_report, desc_len);
-  } else
-  // Receive report from boot mouse only
-  // tuh_hid_report_received_cb() will be invoked when report is available
+  parse_hid_report_descriptor(instance, desc_report, desc_len);
   if (itf_protocol == HID_ITF_PROTOCOL_MOUSE) {
     // Set protocol to full report mode for mouse wheel support
     tuh_hid_set_protocol(dev_addr, instance, HID_PROTOCOL_REPORT);
@@ -451,80 +582,59 @@ static void processMouse(hid_mouse_report_t const *report)
   }
   mutex_exit(&samDeltaMutex);
 }
-static void process_generic_report(uint8_t dev_addr, uint8_t instance, uint8_t const* report, uint16_t len)
+
+static uint32_t extract_bits(uint8_t const* rpt,
+                             uint16_t bit_offset,
+                             uint8_t bit_size)
 {
-  (void) dev_addr;
-  (void) len;
+    uint32_t v = 0;
+    uint16_t byte = bit_offset / 8;
+    uint8_t shift = bit_offset % 8;
 
-  uint8_t const rpt_count = hid_info[instance].report_count;
-  tuh_hid_report_info_t* rpt_info_arr = hid_info[instance].report_info;
-  tuh_hid_report_info_t* rpt_info = NULL;
+    int bytes = (shift + bit_size + 7) / 8;
 
-  if ( rpt_count == 1 && rpt_info_arr[0].report_id == 0) {
-    // Simple report without report ID as 1st byte
-    rpt_info = &rpt_info_arr[0];
-  } else {
-    // Composite report, 1st byte is report ID, data starts from 2nd byte
-    uint8_t const rpt_id = report[0];
-
-    // Find report id in the array
-    for(uint8_t i=0; i<rpt_count; i++) {
-      if (rpt_id == rpt_info_arr[i].report_id ) {
-        rpt_info = &rpt_info_arr[i];
-        break;
-      }
+    for (int i = 0; i < bytes; i++) {
+        v |= (uint32_t)rpt[byte + i] << (8 * i);
     }
 
-    report++;
-    len--;
-  }
-
-  if (!rpt_info) {
-    printf("Couldn't find report info !\r\n");
-    return;
-  }
-
-  // For complete list of Usage Page & Usage checkout src/class/hid/hid.h. For examples:
-  // - Keyboard                     : Desktop, Keyboard
-  // - Mouse                        : Desktop, Mouse
-  // - Gamepad                      : Desktop, Gamepad
-  // - Consumer Control (Media Key) : Consumer, Consumer Control
-  // - System Control (Power key)   : Desktop, System Control
-  // - Generic (vendor)             : 0xFFxx, xx
-  if ( rpt_info->usage_page == HID_USAGE_PAGE_DESKTOP ) {
-    switch (rpt_info->usage) {
-/*
-      case HID_USAGE_DESKTOP_KEYBOARD:
-        TU_LOG1("HID receive keyboard report\r\n");
-        // Assume keyboard follow boot report layout
-        process_kbd_report( (hid_keyboard_report_t const*) report );
-        break;
-*/
-      case HID_USAGE_DESKTOP_MOUSE:
-        TU_LOG1("HID receive mouse report\r\n");
-        // Assume mouse follow boot report layout
-        processMouse((hid_mouse_report_t const*) report );
-        break;
-
-      default:
-        break;
-    }
-  }
+    v >>= shift;
+    uint32_t mask = (bit_size == 32) ? 0xFFFFFFFF : ((1u << bit_size) - 1);
+    return v & mask;
 }
 
+void decode_report(int instance,
+                   uint8_t const* data,
+                   uint16_t len)
+{
+  hid_mouse_report_t m = {0};
+  (void) len;
+  if (matchedfields.x.instance == instance && (matchedfields.x.report_id == -1 || matchedfields.x.report_id == data[0])) {
+    m.x = extract_bits(data, matchedfields.x.bit_offset, matchedfields.x.bit_size);
+  }
+  if (matchedfields.y.instance == instance && (matchedfields.y.report_id == -1 || matchedfields.y.report_id == data[0])) {
+    m.y = extract_bits(data, matchedfields.y.bit_offset, matchedfields.y.bit_size);
+  }
+  if (matchedfields.buttons.instance == instance && (matchedfields.buttons.report_id == -1 || matchedfields.buttons.report_id == data[0])) {
+    m.buttons = extract_bits(data, matchedfields.buttons.bit_offset, matchedfields.buttons.bit_size);
+  }
+  if (matchedfields.wheel.instance == instance && (matchedfields.wheel.report_id == -1 || matchedfields.wheel.report_id == data[0])) {
+    m.wheel = extract_bits(data, matchedfields.wheel.bit_offset, matchedfields.wheel.bit_size);
+  }
+ // Now pass the boot-style struct to the existing mouse handler
+  processMouse(&m);
+}
 void tuh_hid_report_received_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *report, uint16_t len)
 {
   uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
   switch (itf_protocol)
   {
   case HID_ITF_PROTOCOL_MOUSE:
-    processMouse((hid_mouse_report_t const *)report);
+    decode_report(instance, report, len);
     break;
   case HID_ITF_PROTOCOL_KEYBOARD:
     // do nothing
-    break;
   default:
-    process_generic_report(dev_addr, instance, report, len);
+    decode_report(instance, report, len);
     break;
   }
 
