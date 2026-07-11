@@ -81,7 +81,8 @@ getJSPins () {
   unsigned long nextpins = gpio_get_all();
   nextpins = 
 
-#if ((JoystickPinsMask >> JoystickFire_PIN) == 31) 
+#if (((JoystickPinsMask >> JoystickFire_PIN) == 31) && (JoystickFirePIN < JoystickUp_PIN))
+// we're not on the broken prototype where the joystick pins aren't in the same order as the output pins
             (nextpins & JoystickPinsMask) >> JoystickFire_PIN;
 #else
               (((nextpins >> JoystickFire_PIN)  & 1) << 0) |
@@ -133,7 +134,7 @@ SamRDMTightLoop () {
         nextpins = getJSPins();
         gpio_put_masked(SamMousePinsMask, 
 #if ((SamMousePinsMask >> SamMouseBit0_PIN) == 31)
-// we're on the final board
+// we're not on the broken prototype where the pins aren't contiguous
           ((nextpins&31)<<SamMouseBit0_PIN)
 #else
           ((nextpins&1)<<SamMouseBit0_PIN)
@@ -233,7 +234,7 @@ SamRDMTightLoop () {
     // rdmsel has gone inactive again, so we move to the next state and output the values for that state
     gpio_put_masked(SamMousePinsMask, 
 #if ((SamMousePinsMask >> SamMouseBit0_PIN) == 31)
-// we're on the final board
+// we're not on the broken prototype where the pins aren't contiguous
           ((nextpins&31)<<SamMouseBit0_PIN)
 #else
           ((nextpins&1)<<SamMouseBit0_PIN)
@@ -270,8 +271,10 @@ void core1_main()
   tuh_init(0); // 1 for pio-usb or max3421, 0 for main pico hub
  // even though we've set PICO_DEFAULT_LED_PIN to our STATUS_PIN in main.h, the tinyusb library is prebuilt with it set to 25
  // So we force that pin as input here. Messy, but works.
+ #if (STATUS_PIN != 25)
   gpio_set_dir(25, false);
   gpio_pull_up(25);
+#endif
 // board_init will be setting the clock speed to 133mhz, apparently, so we need to do any speed set here
 // unfortunately it looks like 133 is just about the minimum required. So we'll leave it alone for now.  
 //  set_sys_clock_khz(100000, true); 
