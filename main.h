@@ -28,11 +28,12 @@
 #ifndef _MAIN_H_
 #define _MAIN_H_
 
+#define SAMMOUSE_FINALBOARD 1
 // Hardware map
 
 // Sam output pins
-// on our pico board, these were 5-9
-/*
+#ifdef SAMMOUSE_PROTOBOARD
+// these are for the prototype board
 // I'm an idiot for not putting these in order in my PCB, since it breaks the pio version
 // we're also swapping left+right and ctrl+down, because I'm even more of an idiot and put
 // the connector on backwards
@@ -43,38 +44,65 @@
 // MouseBit4 isn't used by the sam mouse, but we want to use it
 // for the joystick to ctrl+up+down+left+right
 #define SamMouseBit4_PIN 7
-// the (inverted) RDM select pin goes next. 22 on the pico board.
-#define RDMSEL_PIN 4*/
+// the (inverted) RDM select pin goes next
+#define RDMSEL_PIN 4
+#endif
+
 // these for the final board
+#ifdef SAMMOUSE_FINALBOARD
 #define SamMouseBit0_PIN 3
 #define SamMouseBit1_PIN 4
 #define SamMouseBit2_PIN 5
 #define SamMouseBit3_PIN 6
 #define SamMouseBit4_PIN 7
 #define RDMSEL_PIN 2
-
-#define SamMousePinsMask ((1<<SamMouseBit0_PIN)|(1<<SamMouseBit1_PIN)|(1<<SamMouseBit2_PIN)|(1<<SamMouseBit3_PIN)|(1<<SamMouseBit4_PIN))
 // Mouse Status LED. 25 on a Pico
 #define STATUS_PIN 8
+#endif
+#ifdef SAMMOUSE_PICOBOARD
+// pico board
+#define SamMouseBit0_PIN 5
+#define SamMouseBit1_PIN 6
+#define SamMouseBit2_PIN 7
+#define SamMouseBit3_PIN 8
+#define SamMouseBit4_PIN 9
+#define RDMSEL_PIN 22
+#define STATUS_PIN 25
+#endif
+#define SamMousePinsMask ((1<<SamMouseBit0_PIN)|(1<<SamMouseBit1_PIN)|(1<<SamMouseBit2_PIN)|(1<<SamMouseBit3_PIN)|(1<<SamMouseBit4_PIN))
+
 // try to make sure the rp2040 board doesn't override our gpio25
+#if (STATUS_PIN != 25)
 #undef PICO_DEFAULT_LED_PIN
 #define PICO_DEFAULT_LED_PIN STATUS_PIN
+#endif
 
 // joystick pins
-/*#define JoystickUp_PIN 25
+#ifdef SAMMOUSE_PROTOBOARD
+#define JoystickUp_PIN 25
 #define JoystickDown_PIN 26
 #define JoystickLeft_PIN 27
 #define JoystickRight_PIN 28
 #define JoystickFire_PIN 29
-*/
-// these for the final board
+#endif
+
+#ifdef SAMMOUSE_FINALBOARD
 #define JoystickFire_PIN 25
 #define JoystickUp_PIN 26
 #define JoystickDown_PIN 27
 #define JoystickLeft_PIN 28
 #define JoystickRight_PIN 29
+#endif
 
-
+#ifdef SAMMOUSE_PICOBOARD
+// pico board doesn't have joystick connector but could have one added
+// for now we'll set the pins to 
+#define JoystickFire_PIN 10
+#define JoystickUp_PIN 11
+#define JoystickDown_PIN 12
+#define JoystickLeft_PIN 13
+#define JoystickRight_PIN 14
+#endif
 
 #define JoystickPinsMask ((1<<JoystickUp_PIN)|(1<<JoystickDown_PIN)|(1<<JoystickLeft_PIN)|(1<<JoystickRight_PIN)|(1<<JoystickFire_PIN))
 
