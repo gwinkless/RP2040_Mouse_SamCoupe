@@ -1,3 +1,12 @@
+# Generated Cmake Pico project file
+
+cmake_minimum_required(VERSION 3.13)
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+# Initialise pico_sdk from installed location
+# (note this can come from environment, CMake cache etc)
 # == DO NOT EDIT THE FOLLOWING LINES for the Raspberry Pi Pico VS Code Extension to work ==
 if(WIN32)
     set(USERHOME $ENV{USERPROFILE})
@@ -13,13 +22,13 @@ if (EXISTS ${picoVscode})
 endif()
 # ====================================================================================
 set(PICO_BOARD pico CACHE STRING "Board type")
-set(CMAKE_SYSTEM_NAME Generic)
+set(PICO_TINYUSB_PATH "C:/Users/def_g/GITROOT/tinyusb")
+# Tell TinyUSB not to use its own RP2040 BSP
+add_compile_definitions(CFG_TUH_HID_SET_PROTOCOL_ON_ENUM=1)
+include_directories(${PICO_TINYUSB_PATH}/src ${PICO_TINYUSB_PATH})
+include(pico_sdk_import.cmake)
+project(rp2040_mouse C CXX ASM )
 
-cmake_minimum_required(VERSION 3.13)
-set(PICO_SDK_FETCH_FROM_GIT on)
-include(${PICO_SDK_PATH}/external/pico_sdk_import.cmake)
-project(rp2040_mouse)
-enable_language( C CXX ASM )
 pico_sdk_init()
 
 set(target_name rp2040_mouse)
@@ -42,7 +51,6 @@ pico_set_program_url(rp2040_mouse "https://github.com/gwinkless/RP2040_Mouse_Sam
 # print memory usage, enable all warnings
 target_link_options(${target_name} PRIVATE -Xlinker --print-memory-usage)
 target_compile_options(${target_name} PRIVATE -Wall -Wextra)
-
 # needed so tinyusb can find tusb_config.h
 target_include_directories(${target_name} PRIVATE ${CMAKE_CURRENT_LIST_DIR})
 
