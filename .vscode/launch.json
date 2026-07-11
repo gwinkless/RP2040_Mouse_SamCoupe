@@ -2,32 +2,6 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Pico Debug (PicoProbe)",
-            "cwd": "C:\\OpenOCD\\share\\openocd\\scripts",
-            "executable": "${command:raspberry-pi-pico.launchTargetPath}",
-            "request": "launch",
-            "type": "cortex-debug",
-            "servertype": "openocd",
-            "serverpath": "C:\\OpenOCD\\bin\\openocd.exe",
-            "gdbPath": "${command:raspberry-pi-pico.getGDBPath}",
-            "device": "${command:raspberry-pi-pico.getChipUppercase}",
-            "configFiles": [
-                "interface/cmsis-dap.cfg",
-                "target/${command:raspberry-pi-pico.getTarget}.cfg"
-            ],
-            "svdFile": "${userHome}/.pico-sdk/sdk/2.2.0/src/${command:raspberry-pi-pico.getChip}/hardware_regs/${command:raspberry-pi-pico.getChipUppercase}.svd",
-            "runToEntryPoint": "main",
-            // Fix for no_flash binaries, where monitor reset halt doesn't do what is expected
-            // Also works fine for flash binaries
-            "overrideLaunchCommands": [
-                "monitor reset init",
-                "load \"${command:raspberry-pi-pico.launchTargetPath}\""
-            ],
-            "openOCDLaunchCommands": [
-                "adapter speed 5000"
-            ]
-        },
-        {
             "name": "Pico Debug (Cortex-Debug)",
             "cwd": "${userHome}/.pico-sdk/openocd/0.12.0+dev/scripts",
             "executable": "${command:raspberry-pi-pico.launchTargetPath}",
@@ -36,6 +10,7 @@
             "servertype": "openocd",
             "serverpath": "${userHome}/.pico-sdk/openocd/0.12.0+dev/openocd.exe",
             "gdbPath": "${command:raspberry-pi-pico.getGDBPath}",
+            "debuggerArgs": ["-ex", "set debug-file-directory /debug"],
             "device": "${command:raspberry-pi-pico.getChipUppercase}",
             "configFiles": [
                 "interface/cmsis-dap.cfg",
@@ -62,6 +37,7 @@
             "servertype": "external",
             "gdbTarget": "localhost:3333",
             "gdbPath": "${command:raspberry-pi-pico.getGDBPath}",
+            "debuggerArgs": ["-ex", "set debug-file-directory /debug"],
             "device": "${command:raspberry-pi-pico.getChipUppercase}",
             "svdFile": "${userHome}/.pico-sdk/sdk/2.2.0/src/${command:raspberry-pi-pico.getChip}/hardware_regs/${command:raspberry-pi-pico.getChipUppercase}.svd",
             "runToEntryPoint": "main",
@@ -74,3 +50,116 @@
         },
     ]
 }
+
+/*
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Pico Debug (Cortex-Debug)",
+            "cwd": "${userHome}/.pico-sdk/openocd/0.12.0+dev/scripts",
+            "executable": "${command:raspberry-pi-pico.launchTargetPath}",
+            "request": "launch",
+            "type": "cortex-debug",
+            "servertype": "openocd",
+//            "serverpath": "${userHome}/.pico-sdk/openocd/0.12.0+dev/openocd.exe",
+            "serverpath": "C:/xpack-openocd/bin/openocd.exe",
+            "gdbPath": "${command:raspberry-pi-pico.getGDBPath}",
+            "debuggerArgs": ["-ex", "set debug-file-directory /debug"],
+            "device": "${command:raspberry-pi-pico.getChipUppercase}",
+            "configFiles": [
+                "interface/cmsis-dap.cfg",
+                "target/${command:raspberry-pi-pico.getTarget}.cfg"
+            ],
+            "svdFile": "${userHome}/.pico-sdk/sdk/2.2.0/src/${command:raspberry-pi-pico.getChip}/hardware_regs/${command:raspberry-pi-pico.getChipUppercase}.svd",
+            "runToEntryPoint": "main",
+            // Fix for no_flash binaries, where monitor reset halt doesn't do what is expected
+            // Also works fine for flash binaries
+            "overrideLaunchCommands": [
+                "monitor reset init",
+                "load \"${command:raspberry-pi-pico.launchTargetPath}\""
+            ],
+            "openOCDLaunchCommands": [
+                "adapter speed 5000"
+            ]
+        },
+        {
+            "name": "Pico Debug (Cortex-Debug with external OpenOCD)",
+            "cwd": "${workspaceRoot}",
+            "executable": "${command:raspberry-pi-pico.launchTargetPath}",
+            "request": "launch",
+            "type": "cortex-debug",
+            "servertype": "external",
+            "gdbTarget": "localhost:3333",
+            "gdbPath": "${command:raspberry-pi-pico.getGDBPath}",
+            "debuggerArgs": ["-ex", "set debug-file-directory /debug"],
+            "device": "${command:raspberry-pi-pico.getChipUppercase}",
+            "svdFile": "${userHome}/.pico-sdk/sdk/2.2.0/src/${command:raspberry-pi-pico.getChip}/hardware_regs/${command:raspberry-pi-pico.getChipUppercase}.svd",
+            "runToEntryPoint": "main",
+            // Fix for no_flash binaries, where monitor reset halt doesn't do what is expected
+            // Also works fine for flash binaries
+            "overrideLaunchCommands": [
+                "monitor reset init",
+                "load \"${command:raspberry-pi-pico.launchTargetPath}\""
+            ]
+        },
+{
+            "name": "Picoprobe Debug",
+            "type": "cortex-debug",
+            "request": "launch",
+            "servertype": "openocd",
+            "serverpath": "C:/xpack-openocd/bin/openocd.exe",
+            "cwd": "${workspaceFolder}",
+            "executable": "C:/Users/def_g/GITROOT/RP2040_Mouse_SamCoupe/build/rp2040_mouse.elf",
+            "device": "RP2040",
+
+            "searchDir": [
+                "C:/xpack-openocd/openocd/scripts"
+            ],
+
+            "configFiles": [
+                "interface/cmsis-dap.cfg",
+                "target/rp2040.cfg"
+            ],
+
+            "serverArgs": [
+                "-c", "adapter speed 5000",
+                "-c", "reset_config srst_only srst_nogate",
+                "-c", "init",
+                "-c", "reset init"
+            ],
+
+            "svdFile": "${workspaceFolder}/rp2040.svd"
+        },
+{
+            "name": "Picoprobe Debug attach",
+            "type": "cortex-debug",
+"request": "attach",
+"runToMain": false,
+            "servertype": "openocd",
+            "serverpath": "C:/xpack-openocd/bin/openocd.exe",
+            "cwd": "${workspaceFolder}",
+            "executable": "C:/Users/def_g/GITROOT/RP2040_Mouse_SamCoupe/build/rp2040_mouse.elf",
+            "device": "RP2040",
+
+            "searchDir": [
+                "C:/xpack-openocd/openocd/scripts"
+            ],
+
+            "configFiles": [
+                "interface/cmsis-dap.cfg",
+                "target/rp2040.cfg"
+            ],
+
+            "serverArgs": [
+                "-c", "adapter speed 5000",
+                "-c", "reset_config srst_only srst_nogate",
+                "-c", "init",
+                "-c", "reset init"
+            ],
+
+            "svdFile": "${workspaceFolder}/rp2040.svd"
+        }
+    ]
+}
+*/
