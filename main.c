@@ -173,10 +173,10 @@ SamRDMTightLoop () {
           } else if (copyYDelta < -0x7ff) {
             copyYDelta = -0x7ff;
           }
-          if (copyWheel > 127) {
-            copyWheel = 127;
-          } else if (copyWheel < -128) {
-            copyWheel = -128;
+          if (copyWheel > 63) {
+            copyWheel = 63;
+          } else if (copyWheel < -64) {
+            copyWheel = -64;
           }
           copyButtState = samButts;
           jspins = getJSPins();
