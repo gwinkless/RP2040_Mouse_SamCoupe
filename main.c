@@ -249,16 +249,16 @@ SamRDMTightLoop () {
   }
 }
 
-static void blink_status(uint8_t count)
+static void blink_status(uint8_t count, uint8_t delayms)
 {
   uint8_t i = 0;
   gpio_put(STATUS_PIN, 0);
 
   while (i < count)
   {
-    sleep_ms(200);
+    sleep_ms(delayms);
     gpio_put(STATUS_PIN, 1);
-    sleep_ms(200);
+    sleep_ms(delayms);
     gpio_put(STATUS_PIN, 0);
     i++;
   }
@@ -329,7 +329,7 @@ main()
   DEBUG_PRINT(("Hardware Initalized\r\n"));
 
   // Blink Status LED and wait for everything to settle
-//  blink_status(10);
+//  blink_status(10, 200);
 // can't believe this (5 seconds) needs to be so long.
 // Also, we don't really care if we run before everything's ready, so I'm just going to take it out
 
@@ -530,7 +530,8 @@ void tuh_hid_report_descriptor_cb(uint8_t dev_addr, uint8_t instance,
                                   uint8_t const* desc_report, uint16_t desc_len) {
   parse_hid_report_descriptor(instance, desc_report, desc_len);
   if (tuh_hid_receive_report(dev_addr, instance)) {
-    blink_status(3);
+//    blink_status(3, 200);
+// don't need to do this. It just slows down availability when you plug in the device.
   }
 }
 // Invoked when device with hid interface is mounted
@@ -547,7 +548,7 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_re
     mouseinstance = instance;
   }
   if (tuh_hid_receive_report(dev_addr, instance)) {
-    blink_status(3);
+    blink_status(3, 200);
   }
   if (mouseLive) gpio_put(STATUS_PIN, 1); // Turn status LED on
 }
