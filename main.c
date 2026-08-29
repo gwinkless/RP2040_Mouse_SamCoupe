@@ -425,7 +425,6 @@ void parse_hid_report_descriptor(int instance,
     uint8_t report_count = 0;
     int16_t report_id = -1;
     int first_button_bit_offset = -1;
-    uint16_t local_usage = 0;
     for (uint16_t i = 0; i < len; ) {
         uint8_t b = desc[i++];
         uint8_t size = b & 0x03;
