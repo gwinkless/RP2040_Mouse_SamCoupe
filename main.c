@@ -581,7 +581,7 @@ static void processMouse(hid_mouse_report_t const *report)
   samYDelta = (tmpsamYDelta > 0x7ff) ? 0x7ff : ((tmpsamYDelta < -0x7ff) ? -0x7ff : (int16_t)tmpsamYDelta);
   if (report->wheel) {
     tmpsamWheelDelta = samWheelDelta + report->wheel;
-    samWheelDelta = (tmpsamWheelDelta > 127) ? 127 : ((tmpsamWheelDelta < -128) ? -128 : tmpsamWheelDelta);
+    samWheelDelta = (tmpsamWheelDelta > 63) ? 63 : ((tmpsamWheelDelta < -64) ? -64 : tmpsamWheelDelta);
   }
   mutex_exit(&samDeltaMutex);
 }
