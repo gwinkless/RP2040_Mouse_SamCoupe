@@ -73,6 +73,9 @@ auto_init_mutex(samDeltaMutex);
   do                   \
   {                    \
   } while (0)
+#ifdef CFG_TUSB_DEBUG
+#undef CFG_TUSB_DEBUG
+#endif  
 #define CFG_TUSB_DEBUG 0
 #endif
 unsigned long
