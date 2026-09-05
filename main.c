@@ -71,6 +71,7 @@ volatile bool mouseLive = false;
 
 volatile uint8_t mouseinstance;
 volatile bool justmounted = false; // usb callback sets justmounted and mouseinstance/dev_addr
+
 static uint32_t crc32(const unsigned char *s, size_t length){
   uint32_t crc = 0xffffffff;
   size_t i;
@@ -252,7 +253,8 @@ auto_init_mutex(samDeltaMutex);
 #endif  
 #define CFG_TUSB_DEBUG 0
 #endif
-unsigned long
+static inline unsigned long
+__attribute__((section(".time_critical"))) 
 getJSPins () {
   unsigned long nextpins = gpio_get_all();
   nextpins = 
@@ -425,7 +427,7 @@ SamRDMTightLoop () {
   }
 }
 
-static void blink_status(uint8_t count, uint8_t delayms)
+static void blink_status(uint8_t count, uint16_t delayms)
 {
   uint8_t i = 0;
   gpio_put(STATUS_PIN, 0);
@@ -803,7 +805,7 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_re
     mouseinstance = instance;
   }
   if (tuh_hid_receive_report(dev_addr, instance)) {
-    blink_status(3, 200);
+    blink_status(3, 50);
   }
 }
 
@@ -816,17 +818,12 @@ void tuh_hid_umount_cb(uint8_t dev_addr, uint8_t instance)
   if (instance == mouseinstance) mouseLive = false;
   gpio_put(STATUS_PIN, 0); // Turn status LED off
 }
-
 static void processMouse(hid_mouse_report_t const *report)
 {
   int16_t tmpsamXDelta, tmpsamYDelta, tmpsamWheelDelta;
-  // Blink status LED
-  // gpio_put(STATUS_PIN, 0);
-  // Handle mouse buttons
-  samButts = ((report->buttons & 1) | ((report->buttons << 1) & 4) | ((report->buttons >> 1) & 2)) ^ 0xf;
 // usb mouse buttons are active-high, we want active-low. 
 // We swap bits 1 and 2 because USB is left-right-centre, sam is left-centre-right
-
+  samButts = ((report->buttons & 1) | ((report->buttons << 1) & 4) | ((report->buttons >> 1) & 2)) ^ 0xf;
   // Handle mouse movement
   mutex_enter_blocking(&samDeltaMutex);
   tmpsamXDelta = samXDelta + report->x;
