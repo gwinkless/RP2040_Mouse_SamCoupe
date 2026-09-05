@@ -359,6 +359,11 @@ SamRDMTightLoop () {
 
           break;
         case 1:
+          if (copyWheel > 63) {
+            copyWheel = 63;
+          } else if (copyWheel < -64) {
+            copyWheel = -64;
+          }
           nextpins = ((copyWheel&64)>>2) | copyButtState;
           break;
         case 2:
