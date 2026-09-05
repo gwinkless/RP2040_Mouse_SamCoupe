@@ -340,21 +340,6 @@ SamRDMTightLoop () {
           copyWheel += samWheelDelta;
           samWheelDelta = 0;
           mutex_exit(&samDeltaMutex);
-          if (copyXDelta > 0x7ff) {
-            copyXDelta = 0x7ff;
-          } else if (copyXDelta < -0x7ff) {
-            copyXDelta = -0x7ff;
-          }
-          if (copyYDelta > 0x7ff) {
-            copyYDelta = 0x7ff;
-          } else if (copyYDelta < -0x7ff) {
-            copyYDelta = -0x7ff;
-          }
-          if (copyWheel > 63) {
-            copyWheel = 63;
-          } else if (copyWheel < -64) {
-            copyWheel = -64;
-          }
           copyButtState = samButts;
           jspins = getJSPins();
           if (((copyButtState & 7) == 7) && (copyYDelta == 0) && (copyXDelta == 0) && (copyWheel == 0) && (jspins != 0x1f)) {
@@ -378,6 +363,11 @@ SamRDMTightLoop () {
           break;
         case 2:
           scaledYDelta = scaledown(copyYDelta); 
+          if (scaledYDelta > 0x7ff) {
+            scaledYDelta = 0x7ff;
+          } else if (scaledYDelta < -0x7ff) {
+            scaledYDelta = -0x7ff;
+          }
           nextpins = ((copyWheel&32)>>1) | ((scaledYDelta >> 8) & 0xf);
           break;
         case 3:
@@ -388,6 +378,11 @@ SamRDMTightLoop () {
           break;
         case 5:
           scaledXDelta = scaledown(copyXDelta);
+          if (scaledXDelta > 0x7ff) {
+            scaledXDelta = 0x7ff;
+          } else if (scaledXDelta < -0x7ff) {
+            scaledXDelta = -0x7ff;
+          }
           nextpins = ((copyWheel&4)<<2) | ((scaledXDelta >> 8) & 0xf);
           break;
         case 6:
