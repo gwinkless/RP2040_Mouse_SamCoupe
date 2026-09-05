@@ -34,6 +34,7 @@ pico_sdk_init()
 
 set(target_name rp2040_mouse)
 add_executable(${target_name})
+pico_set_binary_type(rp2040_mouse copy_to_ram)
 
 target_sources(${target_name} PRIVATE
  main.c
