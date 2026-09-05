@@ -33,12 +33,20 @@
 #include "pico/multicore.h"
 #include "pico/bootrom.h"
 #include "pico/binary_info.h"
+#include "pico/stdlib.h"
+#include "pico/flash.h"
+#include "hardware/flash.h"
 
 // don't need to configure RP2040 for slower flash, since our flash is plenty fast enough, thanks
 //#define PICO_XOSC_STARTUP_DELAY_MULTIPLIER 64
 //#define PICO_BOOT_STAGE2_CHOOSE_GENERIC_03H 1
 
 #define VERSION "1.0"
+
+// can't imagine us ever using smaller flash than 1MB. The smaller flash
+// chips are actually more expensive than the GD25Q80EEIGR we currently use
+#define FLASH_SETTINGS_ADDR (1024*1024 - 4096)
+#define XIP_SETTINGS_ADDR (XIP_BASE + FLASH_SETTINGS_ADDR)
 
 #include "main.h"
 #include "bsp/board.h"
@@ -63,6 +71,172 @@ volatile bool mouseLive = false;
 
 volatile uint8_t mouseinstance;
 volatile bool justmounted = false; // usb callback sets justmounted and mouseinstance/dev_addr
+static uint32_t crc32(const unsigned char *s, size_t length){
+  uint32_t crc = 0xffffffff;
+  size_t i;
+  for (i = 0; i < length ; i++ ) {
+    uint8_t byte = s[i];
+    crc = crc ^ byte;
+    for (uint8_t j = 8; j > 0; --j) {
+      crc = (crc >> 1) ^ (0xEDB88320 & (-(crc & 1)));
+    }
+    i++;
+  }
+  return crc ^ 0xffffffff;
+}
+
+
+CFG_TUH_MEM_SECTION struct stDesc {
+  TUH_EPBUF_TYPE_DEF(tusb_desc_device_t, device);
+  TUH_EPBUF_DEF(serial, 64*sizeof(uint16_t));
+  TUH_EPBUF_DEF(buf, 128*sizeof(uint16_t));
+} desc;
+
+#define FLASH_CONFIG_SIGNATURE 0x5a3c009e
+// just in case we ever change the config format, store a version id with the config
+#define FLASH_CONFIG_VERSION 1
+struct mconf {
+  int scale;
+  uint32_t flags;
+};
+// do we want the status light on (1) or off (0) when this device is seen?
+#define MCONF_FLAGS_STATUSLIGHT 1
+// do we want to do our acceleration-lite mechanism?
+#define MCONF_FLAGS_ACCEL 2
+struct onedev {
+  struct mconf conf;
+  uint32_t serialcrc;
+  uint16_t idVendor;
+  uint16_t idProduct;
+};
+
+struct onedev *mydev;
+// assuming struct mconf expands to 8 bytes, onedev is 16 bytes. 
+// 255 of them takes 4080 bytes of our 4096 page
+#define MaxConfSettings 255
+struct settingsStore {
+  unsigned int signature;
+  unsigned int count;
+  unsigned int version;
+  struct onedev devconfs[MaxConfSettings];
+} mouseConfigs = {.count = 0,.signature = FLASH_CONFIG_SIGNATURE, .version = FLASH_CONFIG_VERSION};
+
+
+struct onefield {
+  int instance;
+  int report_id;
+  int bit_offset;
+  int bit_size;
+};
+struct {
+    struct onefield x;
+    struct onefield y;
+    struct onefield buttons;
+    struct onefield wheel;
+    uint8_t dev_addr;
+} matchedfields = {0};
+void mouseConfigSaveToFlash () {
+  // we're running from RAM with pico_set_binary_type(rp2040_mouse copy_to_ram)
+  // in CMakeLists.txt, so we don't need to use flash_safe_execute()
+  flash_range_erase(FLASH_SETTINGS_ADDR, 4096);
+  flash_range_program(FLASH_SETTINGS_ADDR, (uint8_t *)&mouseConfigs, 4096);
+//  if (flash_safe_execute(call_flash_range_erase, (uintptr_t []) { FLASH_SETTINGS_ADDR, 4096}, 5000) == PICO_OK) {
+//    flash_safe_execute(call_flash_range_program, (uintptr_t []) { FLASH_SETTINGS_ADDR, (uintptr_t)&mouseConfigs, 4096}, 5000);
+//  }  
+}
+// load the configs from flash into our memory block, if there is one
+void mouseConfigsReadFromFlash () {
+  if (((struct settingsStore *)XIP_SETTINGS_ADDR)->signature == FLASH_CONFIG_SIGNATURE) {
+    memcpy(&mouseConfigs, (uint8_t *)XIP_SETTINGS_ADDR, sizeof(struct settingsStore));
+  }
+}
+void setDefaultConfig (struct onedev * dev) {
+// for now we just reset to these defaults, but at some point we might decide to change the scale
+// based on some precached defaults for certain devices (using dev->idProduct and dev->idVendor)
+  dev->conf.scale = 2;
+  dev->conf.flags = MCONF_FLAGS_STATUSLIGHT | MCONF_FLAGS_ACCEL;
+}
+// search through the existing memory block and see if we already have this device
+struct onedev * mouseConfigFind (struct stDesc *desc) {
+// we only have 255 total (because we restrict ourselves to a single 4096 byte page)
+// and this doesn't need to be fast. So we won't bother sorting the values
+// or bsearch()ing them, just loop around them all, it'll take less than a millisecond
+  unsigned int i;
+  unsigned int serialcrc;
+  serialcrc = crc32(desc->serial, sizeof(desc->serial));
+  struct mconf *mc = NULL, tempmc = {0};
+  for (i=0; i < mouseConfigs.count; i++) {
+    if (mouseConfigs.devconfs[i].idVendor == desc->device.idVendor && mouseConfigs.devconfs[i].idProduct == desc->device.idProduct) {
+// ideally we find one where the vendor, product and serial all match; failing that,
+// use the most recent matching vendor/product pair. That way if we do actually have a 
+// device with the same vid/pid but with a different serial we can still default to
+// something that probably makes sense but also allow us to save different settings if
+// we want two of the same device with different serials to have two different configs;
+// it also means if we have a badly-behaved device that changes its serial each time
+// we always get the most recent saved config for it
+      if (mouseConfigs.devconfs[i].serialcrc == serialcrc) {
+        return &mouseConfigs.devconfs[i];
+      }
+      mc = &mouseConfigs.devconfs[i].conf;
+    }
+  }
+  // we might be about to move (or worse, overwrite) our best-match config,
+  // so we take a copy of it first
+  if (mc) tempmc = *mc;
+  // if we got here, we didn't find an exact match, so create a new conf
+  // at the end with the current vendor/product/serial triplet
+  if (mouseConfigs.count == MaxConfSettings) {
+    // yikes! too many configs for our 4k page.
+    // we'll delete the first from the list.
+    // that could mean we end up deleting the settings for the device you use
+    // most often (if it was the first you ever plugged in);
+    // we could reorder the list every time a different device is plugged in,
+    // to ensure that the ones at the start are the most-used
+    // but that would mean a _lot_ of writes, and the potential risk of deleting
+    // a used config when someone stores 256 device configs is much lower than ending
+    // up with broken flash just because you kept swapping the same two devices
+    // remember at this point we haven't deleted the config on flash, it's
+    // only when someone changes the config for the device that it gets written
+    memmove(mouseConfigs.devconfs, &mouseConfigs.devconfs[1], sizeof(mouseConfigs.devconfs[0])*(MaxConfSettings - 1));
+    mouseConfigs.count--;
+  }
+  if (mc) {
+    memcpy(&mouseConfigs.devconfs[mouseConfigs.count].conf, &tempmc, sizeof(tempmc));
+  } else {
+    setDefaultConfig(&mouseConfigs.devconfs[mouseConfigs.count]);
+  }
+  mouseConfigs.devconfs[mouseConfigs.count].idVendor = desc->device.idVendor;
+  mouseConfigs.devconfs[mouseConfigs.count].idProduct = desc->device.idProduct;
+  mouseConfigs.devconfs[mouseConfigs.count].serialcrc = serialcrc;
+  return &mouseConfigs.devconfs[mouseConfigs.count++];
+}
+static inline int
+__attribute__((section(".time_critical"))) 
+scaledown(int raw) {
+    int scale = mydev->conf.scale;
+
+    if (scale > 0) {
+        // divide by 2^scale, but preserve tiny movements
+        int bias = (1 << scale) - 1;
+        raw = (raw + (raw >= 0 ? bias : -bias)) >> scale;
+    } else if (scale < 0) {
+        // multiply by 2^(-scale)
+        raw = raw << (-scale);
+    }
+
+    if (mydev->conf.flags & MCONF_FLAGS_ACCEL) {
+        int mag = raw >= 0 ? raw : -raw;
+
+        if (mag > 24) {
+            raw <<= 3;   // ×8
+        } else if (mag > 16) {
+            raw <<= 2;   // ×4
+        } else if (mag > 8) {
+            raw <<= 1;   // ×2
+        }
+    }
+    return raw;
+}
 
 auto_init_mutex(samDeltaMutex);
 #ifdef DEBUG
@@ -203,8 +377,7 @@ SamRDMTightLoop () {
           nextpins = ((copyWheel&64)>>2) | copyButtState;
           break;
         case 2:
-          scaledYDelta = copyYDelta >> 2; 
-          
+          scaledYDelta = scaledown(copyYDelta); 
           nextpins = ((copyWheel&32)>>1) | ((scaledYDelta >> 8) & 0xf);
           break;
         case 3:
@@ -214,7 +387,7 @@ SamRDMTightLoop () {
           nextpins = ((copyWheel&8)<<1) | ((scaledYDelta) & 0xf);
           break;
         case 5:
-          scaledXDelta = copyXDelta >> 2;
+          scaledXDelta = scaledown(copyXDelta);
           nextpins = ((copyWheel&4)<<2) | ((scaledXDelta >> 8) & 0xf);
           break;
         case 6:
@@ -270,6 +443,10 @@ static void blink_status(uint8_t count, uint8_t delayms)
 
 void core1_main()
 {
+  uint32_t configTimeStart = 0;
+  uint8_t lastClick = 0;
+  int configState = 0;
+  struct mconf old_config;
   sleep_ms(10);
   board_init();
   const tusb_rhport_init_t rh_init = {
@@ -283,13 +460,101 @@ void core1_main()
   gpio_set_dir(25, false);
   gpio_pull_up(25);
 #endif
-// board_init will be setting the clock speed to 133mhz, apparently, so we need to do any speed set here
-// unfortunately it looks like 133 is just about the minimum required. So we'll leave it alone for now.  
-//  set_sys_clock_khz(100000, true); 
+// I have run successfully at 100MHz, but probably better to give ourselves some
+// additional leeway for timing
+  set_sys_clock_khz(133000, true); 
   
-  while (true)
-  {
+  mouseConfigsReadFromFlash();  
+  while (true) {
     tuh_task(); // tinyusb host task
+// if the device callbacks have found a mouse, they will set matchedfields.dev_addr    
+    if (matchedfields.dev_addr) {
+      uint8_t buf[64];
+      bool gotSerial = false;
+      tuh_descriptor_get_string_sync(matchedfields.dev_addr, 0, 0, buf, sizeof(buf));
+      uint16_t langid = ((uint16_t*)buf)[1];
+  // Get Device Descriptor
+      if (tuh_descriptor_get_device_sync(matchedfields.dev_addr, &desc.device, 18) == XFER_RESULT_SUCCESS) {
+        if (desc.device.iSerialNumber != 0) {
+          if (tuh_descriptor_get_serial_string_sync(matchedfields.dev_addr, langid, desc.serial, sizeof(desc.serial))) {
+            gotSerial = true;
+          }
+        }
+      }
+      if (!gotSerial) memset(desc.serial, '\0', sizeof(desc.serial));
+    // read stored device config, if there is one
+      mydev = mouseConfigFind(&desc);
+      gpio_put(STATUS_PIN, mydev->conf.flags & MCONF_FLAGS_STATUSLIGHT); // set the light based on the config value      
+      matchedfields.dev_addr = 0;
+    }
+
+// check if we need to do our mouse config    
+    switch (configState) {
+      case 0: // not in config. check if 3-buttons are pressed
+        if ((samButts & 7) == 0) { // buttons are active-low
+          configTimeStart = time_us_32();
+          configState = 1; 
+        }
+        break;
+      case 1: // see if 3-buttons are held for 3sec
+        if ((samButts & 7) == 0) {
+          if (time_us_32() >= (configTimeStart + 3000000)) {
+            configState = 2;
+            blink_status(2, 200);
+          }
+        } else configState = 0; // didn't reach 3 seconds, so back to normal
+        break;
+      case 2: // wait for the user to let go of the buttons
+        if ((samButts & 7) == 7) {
+          configState = 3;
+          memcpy(&old_config, &mydev->conf, sizeof(old_config));
+        }
+        break;
+      case 3: // the user has let go of the buttons, so start recording changes
+        if ((samButts & 7) != 7) { // we have a button-click
+          lastClick |= ((samButts & 7) ^ 7); // ^7 because we want active-high
+          // we OR them because we don't expect the user to be able to release
+          // or click all buttons at the same time; this could end up with weird
+          // results if you hold L, then click R and then M separately, but I can
+          // live with that, I think
+        } else if (lastClick) { // buttons released
+          switch (lastClick) { // which buttons were set?
+            case 1:
+              // increase scaling
+              mydev->conf.scale++;
+              blink_status(1, 50);
+              break;
+            case 2:
+              // decrease scaling
+              mydev->conf.scale--;
+              blink_status(2, 50);
+              break;
+            case 3:
+            // buttons 1 and 2 mean change status light
+              blink_status(3, 50);
+              mydev->conf.flags ^= MCONF_FLAGS_STATUSLIGHT;
+              break;
+            case 5:
+            // buttons 1 and 3 mean change acceleration
+              blink_status(5, 50);
+              mydev->conf.flags ^= MCONF_FLAGS_ACCEL;
+              break;
+            case 6:
+            // buttons 2 and 3 mean reset to default
+              setDefaultConfig(mydev);
+              break;
+            case 7:
+              // all three buttons: save config and exit config mode
+              configState = 0;
+              if (memcmp(&old_config, &mydev->conf, sizeof (old_config))) mouseConfigSaveToFlash();
+              blink_status(7, 50);
+              gpio_put(STATUS_PIN, mydev->conf.flags & MCONF_FLAGS_STATUSLIGHT); // set the light based on the config value
+              break;
+          }
+          lastClick = 0;
+        }
+        break;
+    }
   }
 }
 
@@ -402,21 +667,7 @@ void initialiseHardware(void)
 #define MAX_REPORT  8
 
 
-struct onefield {
-  int instance;
-  int report_id;
-  int bit_offset;
-  int bit_size;
-};
-struct {
-    struct onefield x;
-    struct onefield y;
-    struct onefield buttons;
-    struct onefield wheel;
-} matchedfields = {0};
-void parse_hid_report_descriptor(int instance,
-                                 uint8_t const* desc,
-                                 uint16_t len)
+void parse_hid_report_descriptor(uint8_t dev_addr, int instance, uint8_t const* desc, uint16_t len)
 {
     uint16_t bit_offset = 0;
     uint16_t usage_list[32] = {0};
@@ -463,6 +714,7 @@ void parse_hid_report_descriptor(int instance,
                               matchedfields.buttons.bit_offset = bit_offset + ((report_id == -1) ? 0 : 8);
                               matchedfields.buttons.bit_size = report_count;
                               matchedfields.buttons.instance = instance;
+                              matchedfields.dev_addr = dev_addr;
                               first_button_bit_offset = bit_offset;
                           } else if (first_button_bit_offset != -1) {
                               // Additional button block — merge if contiguous
@@ -518,8 +770,9 @@ void parse_hid_report_descriptor(int instance,
                     // Just treat as a generic buttons bitfield, don’t expand
                     usage_count = 0;  // or leave list empty
                 } else {
-                    for (uint16_t u = usage_min; u <= usage_max && usage_count < 32; u++)
+                    for (uint16_t u = usage_min; u <= usage_max && usage_count < 32; u++) {
                         usage_list[usage_count++] = u;
+                    }
                 }                
                 break;
             }
@@ -530,7 +783,7 @@ void parse_hid_report_descriptor(int instance,
 
 void tuh_hid_report_descriptor_cb(uint8_t dev_addr, uint8_t instance,
                                   uint8_t const* desc_report, uint16_t desc_len) {
-  parse_hid_report_descriptor(instance, desc_report, desc_len);
+  parse_hid_report_descriptor(dev_addr, instance, desc_report, desc_len);
   if (tuh_hid_receive_report(dev_addr, instance)) {
 //    blink_status(3, 200);
 // don't need to do this. It just slows down availability when you plug in the device.
@@ -542,7 +795,7 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_re
   (void)desc_len;
   DEBUG_PRINT(("USB Device Attached\r\n"));
   uint8_t const itf_protocol = tuh_hid_interface_protocol(dev_addr, instance);
-  parse_hid_report_descriptor(instance, desc_report, desc_len);
+  parse_hid_report_descriptor(dev_addr, instance, desc_report, desc_len);
   if (itf_protocol == HID_ITF_PROTOCOL_MOUSE) {
     // Set protocol to full report mode for mouse wheel support
     tuh_hid_set_protocol(dev_addr, instance, HID_PROTOCOL_REPORT);
@@ -552,7 +805,6 @@ void tuh_hid_mount_cb(uint8_t dev_addr, uint8_t instance, uint8_t const *desc_re
   if (tuh_hid_receive_report(dev_addr, instance)) {
     blink_status(3, 200);
   }
-  if (mouseLive) gpio_put(STATUS_PIN, 1); // Turn status LED on
 }
 
 // Invoked when device with hid interface is un-mounted
