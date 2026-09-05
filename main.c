@@ -219,12 +219,12 @@ SamRDMTightLoop () {
           break;
         case 7:
           nextpins = ((copyWheel&1)<<4) | ((copyXDelta) & 0xf);
-          break;
-        case 8:
-          nextpins = getJSPins();
           copyYDelta = 0;
           copyXDelta = 0;
           copyWheel = 0;
+          break;
+        case 8:
+          nextpins = getJSPins();
           break;
       }
       rdmstate = (rdmstate + 1) % 9;
