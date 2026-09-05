@@ -104,7 +104,7 @@ __attribute__((noinline, long_call, section(".time_critical")))
 SamRDMTightLoop () {
   static uint32_t LastRDMSelTimeout = 0;
 	static int rdmstate = 0;
-	static int copyXDelta, copyYDelta;
+	static int copyXDelta, copyYDelta, scaledXDelta, scaledYDelta;
   static unsigned char copyButtState;
   static int copyWheel;
   unsigned char jspins;
@@ -203,22 +203,25 @@ SamRDMTightLoop () {
           nextpins = ((copyWheel&64)>>2) | copyButtState;
           break;
         case 2:
-          nextpins = ((copyWheel&32)>>1) | ((copyYDelta >> 8) & 0xf);
+          scaledYDelta = copyYDelta >> 2; 
+          
+          nextpins = ((copyWheel&32)>>1) | ((scaledYDelta >> 8) & 0xf);
           break;
         case 3:
-          nextpins = ((copyWheel&16)) | ((copyYDelta >> 4) & 0xf);
+          nextpins = ((copyWheel&16)) | ((scaledYDelta >> 4) & 0xf);
           break;
         case 4:
-          nextpins = ((copyWheel&8)<<1) | ((copyYDelta) & 0xf);
+          nextpins = ((copyWheel&8)<<1) | ((scaledYDelta) & 0xf);
           break;
         case 5:
-          nextpins = ((copyWheel&4)<<2) | ((copyXDelta >> 8) & 0xf);
+          scaledXDelta = copyXDelta >> 2;
+          nextpins = ((copyWheel&4)<<2) | ((scaledXDelta >> 8) & 0xf);
           break;
         case 6:
-          nextpins = ((copyWheel&2)<<3) | ((copyXDelta >> 4) & 0xf);
+          nextpins = ((copyWheel&2)<<3) | ((scaledXDelta >> 4) & 0xf);
           break;
         case 7:
-          nextpins = ((copyWheel&1)<<4) | ((copyXDelta) & 0xf);
+          nextpins = ((copyWheel&1)<<4) | ((scaledXDelta) & 0xf);
           copyYDelta = 0;
           copyXDelta = 0;
           copyWheel = 0;
@@ -574,8 +577,8 @@ static void processMouse(hid_mouse_report_t const *report)
 
   // Handle mouse movement
   mutex_enter_blocking(&samDeltaMutex);
-  tmpsamXDelta = samXDelta + ((report->x + 1) >> 2);
-  tmpsamYDelta = samYDelta + ((report->y + 1) >> 2);
+  tmpsamXDelta = samXDelta + report->x;
+  tmpsamYDelta = samYDelta + report->y;
   // we only report back 12-bit values, so restrict the allowable range
   samXDelta = (tmpsamXDelta > 0x7ff) ? 0x7ff : ((tmpsamXDelta < -0x7ff) ? -0x7ff : (int16_t)tmpsamXDelta);
   samYDelta = (tmpsamYDelta > 0x7ff) ? 0x7ff : ((tmpsamYDelta < -0x7ff) ? -0x7ff : (int16_t)tmpsamYDelta);
