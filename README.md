@@ -1,5 +1,5 @@
 # Copyright
-2025 Geoff Winkless (github@geoff.dj)
+2026 Geoff Winkless (github@geoff.dj)
 
 Based on the work by:
 
@@ -12,13 +12,13 @@ This is the software component of my Sam Coupé version of Darren's RP2040 based
 
 Hardware will be available from PCBWay once I've finished designing it, or you can build your own version with a Pico, a DIN8 (270°) connector, two 74HC03 open-drain NAND gates, a couple of 100nF capacitors, a 300Ohm pullup resistor and a USB OTG adapter.
 
-You will probably want to try the (theoretically mildly more experimental) PIO branch, which uses the RP2040 PIO mechanism to handle the output to the Coupé and therefore allows us to drop the CPU speed and lower the power requirements.
+The PIO branch uses the RP2040 PIO mechanism to handle the output to the Coupé; at the moment though it's fallen behind main (no wireless mouse support, no DB9 cursor joystick, no flash support) so for now stick with the main branch.
 
 #### Why did you make it?
 
 The Sam Coupé uses a unique(?) 5-pin bus mouse connection with deltas transmitted on-demand.
 
-The existing interfaces for the Sam require either a PS2 (or PS2-over-USB) mouse or a USB-HID mouse with something like the rp2040-mouse (or Smally mouse) and then the SamCo mouse interface to convert the Quadrature output into Sam-specific signals. That's expensive and clunky, and the SamCo interfaces are rare.
+The existing interfaces for the Sam require either a PS2 (or PS2-over-USB) mouse (which are becoming less and less easily-available) or a USB-HID mouse with something like the rp2040-mouse (or Smally mouse) with the SamCo mouse interface to convert the Quadrature output into Sam-specific signals. That's expensive and clunky, and the SamCo interfaces are rare.
 
 # Building
 
